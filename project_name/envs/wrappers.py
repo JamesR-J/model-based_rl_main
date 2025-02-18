@@ -31,7 +31,7 @@ class NormalizedEnv(Env):
     def wrapped_env(self):
         return self._wrapped_env
 
-    def reset(self, obs=None):
+    def reset(self, obs=None, seed=42, options=None):  # TODO adjust this seed thing and options as it is randomised
         if obs is not None:
             unnorm_obs = self.unnormalize_obs(obs)
             unnorm_obs = self._wrapped_env.reset(obs=unnorm_obs)

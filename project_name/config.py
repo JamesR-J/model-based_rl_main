@@ -5,7 +5,10 @@ def get_config():
     config = config_dict.ConfigDict()
     config.SEED = 42
 
-    config.NORMALISE_ENV = True
+    config.ENV_NAME = "bacpendulum-v0"
+    config.NORMALISE_ENV = False
+
+    config.NUM_INIT_DATA = 50
 
     config.TOTAL_TIMESTEPS = 2300000
     config.NUM_DEVICES = 1
@@ -18,7 +21,7 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = "ERSAC"
+    config.AGENT_TYPE = "MPC"
 
     config.AGENT_CONFIG = {}
 
@@ -32,7 +35,7 @@ BELNOAZ LoL
 B - Batch size, probably when using replay buffer
 E - Number of Episodes
 L - Episode Length/NUM_INNER_STEPS
-S - Seq length if using trajectory buffer
+S - Seq length if using trajectory buffer/Planning Horizon
 N - Number of Envs
 O - Observation Dim
 A - Action Dim

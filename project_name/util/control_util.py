@@ -110,17 +110,10 @@ def CEM(
     return best_return, best_obs, best_sample
 
 
-def iCEM_generate_samples(
-    nsamps, horizon, beta, mean, var, action_lower_bound, action_upper_bound
-):
+def iCEM_generate_samples(nsamps, horizon, beta, mean, var, action_lower_bound, action_upper_bound):
     action_dim = mean.shape[-1]
-    samples = (
-        colorednoise.powerlaw_psd_gaussian(
-            beta, size=(nsamps, action_dim, horizon)
-        ).transpose([0, 2, 1])
-        * np.sqrt(var)
-        + mean
-    )
+    samples = (colorednoise.powerlaw_psd_gaussian(beta, size=(nsamps, action_dim, horizon)).transpose([0, 2, 1])
+               * np.sqrt(var) + mean)
     samples = np.clip(samples, action_lower_bound, action_upper_bound)
     return samples
 

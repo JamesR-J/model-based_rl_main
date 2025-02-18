@@ -5,34 +5,104 @@ from project_name.config import get_config  # TODO dodge need to know how to fix
 import wandb
 from typing import NamedTuple
 import chex
-from agents import Agent
+from project_name.agents import Agent
 from project_name.envs.wrappers import NormalizedEnv, make_normalized_reward_function
-from utils import Transition, EvalTransition
+from project_name.util.control_util import get_f_batch_mpc
+from project_name.utils import Transition, EvalTransition
 import sys
 import gymnasium as gym
 from project_name import envs
 import logging
+import numpy as np
+import gymnax
+from gymnax.environments import environment
+from flax import struct
+from project_name.dynamics_models import NeuralNetDynamicsModel
+
+
+@struct.dataclass  # TODO dodgy for now and need to change
+class EnvState(environment.EnvState):
+    position: jnp.ndarray
+    velocity: jnp.ndarray
+    time: int
 
 
 def run_train(config):
-    key, _key = jrandom.split(config.SEED)
+    key = jrandom.PRNGKey(config.SEED)
+    key, _key = jrandom.split(key)
 
     env = gym.make(config.ENV_NAME)
-    reward_function = envs.reward_functions[config.env.name]
+    reward_function = envs.reward_functions[config.ENV_NAME]
+
+    env, env_params = gymnax.make("MountainCarContinuous-v0")
+    # TODO make these envs in gymnax style for continuous control
 
     # TODO add the plot functionality as required
 
-    if config.NORMALISE_ENV:
-        env = NormalizedEnv(env)
-        if reward_function is not None:
-            reward_function = make_normalized_reward_function(env, reward_function, config.alg.gd_opt)
-        # TODO add plot normalisation aswell
+    # if config.NORMALISE_ENV:  # TODO add this for gymnax etc
+    #     env = NormalizedEnv(env)
+    #     if reward_function is not None:
+    #         reward_function = make_normalized_reward_function(env, reward_function)
+    #     # plot_fn = make_normalized_plot_fn(env, plot_fn)  # TODO add plot normalisation aswell
+
+    def get_f_mpc(env, use_info_delta=False):
+        obs_dim = len(env.observation_space(env_params).low)
+
+        def f(x_OPA, key):
+            obs_O = x_OPA[:obs_dim]
+            action_A = x_OPA[obs_dim:]
+            env_state = EnvState(position=obs_O[0], velocity=obs_O[1], time=0)  # TODO specific for mountaincar, need to generalise this
+            nobs_O, _, _, _, info = env.step(key, env_state, action_A, env_params)
+            if use_info_delta:
+                return info["delta_obs"]
+            else:
+                return nobs_O - obs_O
+
+        return jax.vmap(f)
+
+    f = get_f_mpc(env)
 
     # set the initial obs, i.e. env.reset
-    init_obs, _ = env.reset()
+    key, _key = jrandom.split(key)
+    init_obs, init_env_state = env.reset(_key)
     logging.info(f"Start obs: {init_obs}")
 
-    actor = Agent(env=env, env_params=None, config=config, utils=None, key=_key)
+    actor = Agent(env=env, env_params=env_params, config=config, utils=None, key=_key)
+
+    def get_initial_data(config, env, f, key, plot_fn):
+        def unif_random_sample_domain(low, high, key, n=1):
+            unscaled_random_sample = jrandom.uniform(key, shape=(n, low.shape[0]))
+            scaled_random_sample = low[..., :] + (high[..., :] - low[..., :]) * unscaled_random_sample
+            return scaled_random_sample
+
+        low = jnp.concatenate((env.observation_space(env_params).low, jnp.expand_dims(jnp.array(env.action_space().low,), axis=0)))
+        high = jnp.concatenate((env.observation_space(env_params).high, jnp.expand_dims(jnp.array(env.action_space().high,), axis=0)))
+        # TODO is there a better way to do the above
+
+        data_x_LOPA = unif_random_sample_domain(low, high, key, n=config.NUM_INIT_DATA)
+        batch_key = jrandom.split(key, config.NUM_INIT_DATA)
+        data_y_LO = f(data_x_LOPA, batch_key)
+
+        # # Plot initial data  # TODO add data plotting
+        # ax_obs_init, fig_obs_init = plot_fn(path=None, domain=domain)
+        # if ax_obs_init is not None and config.save_figures:
+        #     plot(ax_obs_init, data.x, "o", color="k", ms=1)
+        #     fig_obs_init.suptitle("Initial Observations")
+        #     neatplot.save_figure(str(dumper.expdir / "obs_init"), "png", fig=fig_obs_init)
+        return data_x_LOPA, data_y_LO
+
+    key, _key = jrandom.split(key)
+    init_data_x, init_data_y = get_initial_data(config, env, f, _key, None)  # TODO add plot function
+
+    key, _key = jrandom.split(key)
+    test_data_x, test_data_y = get_initial_data(config, env, f, _key, None)  # TODO add plot function
+
+    key, _key = jrandom.split(key)
+    dynamics_model = NeuralNetDynamicsModel(init_obs, env.action_space().sample(_key), hidden_dims=[50, 50],
+                                            hidden_activations=jax.nn.swish, is_probabilistic=True)
+
+    ### Gets some groundtruth data, we batch it please at some points  # TODO batch this
+    true_path, test_mpc_data = actor.agent.run_algorithm_on_f(f, key)
 
     def train():
         key = jax.random.PRNGKey(config.SEED)

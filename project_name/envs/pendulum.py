@@ -8,13 +8,10 @@ from os import path
 class PendulumEnv(gymnasium.Env):
     metadata = {"render.modes": ["human", "rgb_array"], "video.frames_per_second": 30}
 
-    def __init__(
-        self, g=10.0, seed=None, tight_start=False, medium_start=False, test_case=False
-    ):
+    def __init__(self, g=10.0, seed=None, tight_start=False, medium_start=False, test_case=False):
 
         # Set gym env seed
         assert not (tight_start and medium_start)
-        self.seed(seed)
 
         self.max_speed = 8
         self.max_torque = 2.0
@@ -37,10 +34,6 @@ class PendulumEnv(gymnasium.Env):
             low=-self.max_torque, high=self.max_torque, shape=(1,), dtype=np.float32
         )
         self.observation_space = spaces.Box(low=-high, high=high, dtype=np.float32)
-
-    def seed(self, seed=None):
-        self.np_random, seed = seeding.np_random(seed)
-        return [seed]
 
     def step(self, u):
         th, thdot = self.state  # th := theta
@@ -68,7 +61,7 @@ class PendulumEnv(gymnasium.Env):
         done = False
         return self._get_obs(), -costs, done, {"delta_obs": delta_s}
 
-    def reset(self, obs=None):
+    def reset(self, obs=None, seed=42, options=None):  # TODO adjust this seed thing and options as it is randomised
         high = np.array([np.pi, 1])
         if obs is None:
             if self.tight_start:
