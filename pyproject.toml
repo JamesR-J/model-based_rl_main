@@ -1,0 +1,29 @@
+[project]
+name = "model-based_rl_main"
+version = "0.1.0"
+description = "Default template for PDM package"
+authors = [
+    {name = "james_dell", email = "james.rudd.jones@gmail.com"},
+]
+dependencies = [
+    "jax>=0.5.0",
+    "wandb>=0.19.6",
+    "gymnasium>=1.0.0",
+    "absl-py>=2.1.0",
+    "chex>=0.1.88",
+    "ml-collections>=1.0.0",
+    "tensorflow>=2.18.0",
+]
+requires-python = "==3.10.*"
+readme = "README.md"
+license = {text = "MIT"}
+
+ [build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+ [[tool.pdm.source]]
+ name = "jax_cuda"
+ url = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
+ verify_ssl = true
+ type = "find_links"
