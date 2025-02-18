@@ -2,9 +2,9 @@
 Based off the following: https://github.com/LAVA-LAB/improved_spi/blob/main/wetChicken.py
 """
 
-import gym
-from gym import spaces
-from gym.utils import seeding
+import gymnasium
+from gymnasium import spaces
+from gymnasium.utils import seeding
 import numpy as np
 from os import path
 import matplotlib.pyplot as plt
@@ -19,7 +19,7 @@ ACTION_TRANSLATOR = {
 }
 
 
-class WetChicken(gym.Env):
+class WetChicken(gymnasium.Env):
     # Implements the 2-dimensional discrete Wet Chicken benchmark from 'Efficient Uncertainty Propagation for
     # Reinforcement Learning with Limited Data' by Alexander Hans and Steffen Udluft
 

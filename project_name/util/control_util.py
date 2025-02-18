@@ -1,6 +1,6 @@
 import numpy as np
 from .misc_util import batch_function
-import gym
+import gymnasium
 import logging
 
 try:
@@ -238,15 +238,15 @@ class EnvDynamicsUnroller(DynamicsUnroller):
         return observations, rewards
 
 
-class ResettableEnv(gym.Env):
+class ResettableEnv(gymnasium.Env):
     def __init__(self, env):
         self._wrapped_env = env
         self.action_space = self._wrapped_env.action_space
         self.observation_space = self._wrapped_env.observation_space
-        if mj_here:
-            self.is_mujoco = isinstance(env, MujocoEnv)
-        else:
-            self.is_mujoco = False
+        # if mj_here:  # TODO removed mujoco no thank u
+        #     self.is_mujoco = isinstance(env, MujocoEnv)
+        # else:
+        self.is_mujoco = False
         self.npos = len(env.init_qpos) if self.is_mujoco else None
 
     @property
@@ -377,7 +377,7 @@ def evaluate_policy(policy, env, start_obs=None, mpc_pass=False, autobatch=False
 
 
 def test_continuous_cartpole():
-    from envs.continuous_cartpole import ContinuousCartPoleEnv
+    from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv
 
     # from pets_cartpole import PETSCartpoleEnv
     algo = "iCEM"
@@ -386,8 +386,8 @@ def test_continuous_cartpole():
         if algo == "CEM"
         else rollout_icem_continuous_cartpole
     )
-    env = ContinuousCartPoleEnv()
-    plan_env = ResettableEnv(ContinuousCartPoleEnv())
+    env = CartPoleSwingUpEnv()
+    plan_env = ResettableEnv(CartPoleSwingUpEnv())
     unroller = EnvDynamicsUnroller(plan_env)
     query_counts = []
     returns = []

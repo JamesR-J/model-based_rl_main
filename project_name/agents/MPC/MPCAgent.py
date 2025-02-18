@@ -14,7 +14,7 @@ from project_name.util.control_util import compute_return, iCEM_generate_samples
 from project_name.util.domain_util import project_to_domain
 
 
-class MPC(BatchAlgorithm):
+class MPC(AgentBase):
     """
     An algorithm for model-predictive control. Here, the queries are concatenated states
     and actions and the output of the query is the next state.  We need the reward

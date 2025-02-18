@@ -1,11 +1,11 @@
-import gym
-from gym import spaces
-from gym.utils import seeding
+import gymnasium
+from gymnasium import spaces
+from gymnasium.utils import seeding
 import numpy as np
 from os import path
 
 
-class PendulumEnv(gym.Env):
+class PendulumEnv(gymnasium.Env):
     metadata = {"render.modes": ["human", "rgb_array"], "video.frames_per_second": 30}
 
     def __init__(
@@ -90,7 +90,7 @@ class PendulumEnv(gym.Env):
 
     def render(self, mode="human"):
         if self.viewer is None:
-            from gym.envs.classic_control import rendering
+            from gymnasium.envs.classic_control import rendering
 
             self.viewer = rendering.Viewer(500, 500)
             self.viewer.set_bounds(-2.2, 2.2, -2.2, 2.2)

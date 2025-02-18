@@ -4,9 +4,9 @@ Cart pole swing-up: Identical version to PILCO V0.9
 
 import logging
 import math
-import gym
-from gym import spaces
-from gym.utils import seeding
+import gymnasium
+from gymnasium import spaces
+from gymnasium.utils import seeding
 import numpy as np
 import tensorflow as tf
 
@@ -17,7 +17,7 @@ def angle_normalize(x):
     return ((x + np.pi) % (2 * np.pi)) - np.pi
 
 
-class CartPoleSwingUpEnv(gym.Env):
+class CartPoleSwingUpEnv(gymnasium.Env):
     metadata = {"render.modes": ["human", "rgb_array"], "video.frames_per_second": 50}
     OBSERVATION_DIM = 4
     POLE_LENGTH = 0.6
@@ -148,7 +148,7 @@ class CartPoleSwingUpEnv(gym.Env):
         cartheight = 20.0
 
         if self.viewer is None:
-            from gym.envs.classic_control import rendering
+            from gymnasium.envs.classic_control import rendering
 
             self.viewer = rendering.Viewer(screen_width, screen_height)
 
