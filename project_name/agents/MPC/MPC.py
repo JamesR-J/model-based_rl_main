@@ -98,7 +98,6 @@ class MPCAgent(AgentBase):
         output = start_obs + delta_obs
         return output  # TODO add teleport stuff and move this into utils probs
 
-
     def _first_process_prev_output(self, traj_samples, path_x, path_y, curr_obs_O):
         n_samps = traj_samples.shape[0]
         new_x_SOPA = path_x[-n_samps:]
@@ -144,19 +143,19 @@ class MPCAgent(AgentBase):
         # initialise the MPC
         curr_obs_O, init_traj_samples = self._initialise(key)
 
-        actions_BA = init_traj_samples[:, 0, :]
-        obs_BO = jnp.tile(curr_obs_O, (actions_SA.shape[0], 1))
-        batch_x_SOPA = jnp.concatenate([obs_SO, actions_SA], axis=1)
-
-        key, _key = jrandom.split(key)
-        batched_key = jrandom.split(_key, batch_x_SOPA.shape[0])
-        batch_y_SO = f(batch_x_SOPA, batched_key)
-
-        new_obs_SO, rewards_S = self._first_process_prev_output(init_traj_samples, batch_x_SOPA, batch_y_SO, curr_obs_O)
-
-        batch = self._get_sample_x_batch(init_traj_samples, 0)
-
-        self._get_next_x_batch()
+        # actions_BA = init_traj_samples[:, 0, :]
+        # obs_BO = jnp.tile(curr_obs_O, (actions_SA.shape[0], 1))
+        # batch_x_SOPA = jnp.concatenate([obs_SO, actions_SA], axis=1)
+        #
+        # key, _key = jrandom.split(key)
+        # batched_key = jrandom.split(_key, batch_x_SOPA.shape[0])
+        # batch_y_SO = f(batch_x_SOPA, batched_key)
+        #
+        # new_obs_SO, rewards_S = self._first_process_prev_output(init_traj_samples, batch_x_SOPA, batch_y_SO, curr_obs_O)
+        #
+        # batch = self._get_sample_x_batch(init_traj_samples, 0)
+        #
+        # self._get_next_x_batch()
 
         """
         This will be a scan
@@ -172,13 +171,17 @@ class MPCAgent(AgentBase):
         get reward
         end loop
         
-        resample_iCEM and run loop again, I think I could batch the loop to run parallel
+        resample_iCEM and run loop again, CAN'T BATCH AS IT REQUIRES PREVIOUS LOOP DETAILS
         
         somehow figure out another outer loop on top of it but I think that leads off each other        
         """
 
         def outer_loop():
             # this is the one until iter_nums == finished, idk how to calculate this tho
+            return
+
+        def sample_ICEM():
+            # loops over the below and then takes trajectories to resample ICEM if not initial
             return
 
         def _run_planning_horizon(runner_state, unused):
