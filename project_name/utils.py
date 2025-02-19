@@ -28,6 +28,12 @@ class Transition(NamedTuple):
     info: jnp.ndarray
 
 
+class MPCTransition(NamedTuple):
+    obs: jnp.ndarray
+    action:jnp.ndarray
+    reward:jnp.ndarray
+
+
 class TransitionFlashbax(NamedTuple):
     done: jnp.ndarray
     action: jnp.ndarray

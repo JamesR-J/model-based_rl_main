@@ -20,6 +20,16 @@ import jax
 from functools import partial
 import colorednoise
 import jax.random as jrandom
+from gymnax.environments import environment
+from flax import struct
+from project_name.utils import MPCTransition
+
+
+@struct.dataclass  # TODO dodgy for now and need to change
+class EnvState(environment.EnvState):
+    position: jnp.ndarray
+    velocity: jnp.ndarray
+    time: int
 
 
 class MPCAgent(AgentBase):
@@ -34,6 +44,9 @@ class MPCAgent(AgentBase):
         self.agent_config = get_MPC_config()
         self.env = env
         self.env_params = env_params
+
+        self.obs_dim = len(self.env.observation_space(self.env_params).low)
+        # TODO match this to the other rl main stuff
 
         # # self.traj_samples = list(self.traj_samples)
         # # self.traj_samples += samples_to_pass
@@ -73,12 +86,9 @@ class MPCAgent(AgentBase):
         samples = np.clip(samples, action_lower_bound, action_upper_bound)
         return samples
 
-    def _initialise(self, key):
+    def _initialise(self, iter_num, mean, var, key):
         # set up initial CEM distribution
-        mean = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.env.action_space().shape[0]))
-        var = (jnp.ones_like(mean) * ((self.env.action_space().high - self.env.action_space().low)
-                                                / self.agent_config.INIT_VAR_DIVISOR) ** 2)
-        nsamps = int(max(self.agent_config.BASE_NSAMPS * (self.agent_config.GAMMA ** -1), 2 * self.agent_config.N_ELITES))
+        nsamps = int(max(self.agent_config.BASE_NSAMPS * (self.agent_config.GAMMA ** -iter_num), 2 * self.agent_config.N_ELITES))
         traj_samples = self._iCEM_generate_samples(nsamps,
                                                   self.agent_config.PLANNING_HORIZON,
                                                   self.agent_config.BETA,
@@ -90,114 +100,150 @@ class MPCAgent(AgentBase):
         key, _key = jrandom.split(key)
         curr_obs, _ = self.env.reset(_key)
 
-        return curr_obs, traj_samples
+        return curr_obs, traj_samples, key
 
-    def _obs_update_fn(self, x, y, obs_dim):  # TODO depends on the env, need to instate this somehow, curr no teleport
-        start_obs = x[..., :obs_dim]
-        delta_obs = y[..., -obs_dim:]
+    def get_f_mpc(self, use_info_delta=False):  # TODO this should be generalised out of class at some point
+        def f(x_OPA, key):
+            obs_O = x_OPA[:self.obs_dim]
+            action_A = x_OPA[self.obs_dim:]
+            env_state = EnvState(position=obs_O[0], velocity=obs_O[1], time=0)  # TODO specific for mountaincar, need to generalise this
+            nobs_O, _, _, _, info = self.env.step(key, env_state, action_A, self.env_params)
+            if use_info_delta:
+                return info["delta_obs"]
+            else:
+                return nobs_O - obs_O
+
+        return jax.vmap(f)  # TODO we have to vmap this due to the iCEM samples, can we do this last?
+
+    def _obs_update_fn(self, x, y):  # TODO depends on the env, need to instate this somehow, curr no teleport
+        start_obs = x[..., :self.obs_dim]
+        delta_obs = y[..., -self.obs_dim:]
         output = start_obs + delta_obs
         return output  # TODO add teleport stuff and move this into utils probs
 
-    def _first_process_prev_output(self, traj_samples, path_x, path_y, curr_obs_O):
-        n_samps = traj_samples.shape[0]
-        new_x_SOPA = path_x[-n_samps:]
-        new_y_SO = path_y[-n_samps:]
-        obs_SO = jnp.tile(curr_obs_O, (n_samps, 1))
-
-        # delta = new_y if self.params.reward_function else new_y[:, 1:]
-        delta_SO = new_y_SO
-
-        new_obs_SO = self._obs_update_fn(obs_SO, delta_SO, len(self.env.observation_space(self.env_params).low))
-        rewards_S = jnp.ones((new_obs_SO.shape[0]))  # self.env.reward_function(new_x_SOPA, new_obs_SO)
-        # TODO add the proper reward functions
-
-        return new_obs_SO, rewards_S
-
-    def _get_sample_x_batch(self, traj_samples, current_t_plan):
-        actions = traj_samples[:, current_t_plan, :]
-        obs = self.traj_states[-1]
-        queries = np.concatenate([obs, actions], axis=1)
-        batch = list(queries)
-
-        return batch
-
-    def _get_next_x_batch(self):
-        """
-        Given the current execution path, return the next x in the execution path. If
-        the algorithm is complete, return None.
-        """
-        if len(self.exe_path.x) > 0:
-            self.process_prev_output()
-        # at this point the *_done should be correct
-        if self.samples_done and self.iter_num + 1 == self.params.num_iters:
-            shift_actions = self.save_planned_actions()
-            if self.current_t >= self.params.env_horizon:
-                # done planning
-                return []
-            self.reset_CEM(shift_actions)
-        elif self.samples_done:
-            self.resample_iCEM()
-        return self.get_sample_x_batch()
-
     def run_algorithm_on_f(self, f, key):
-        # initialise the MPC
-        curr_obs_O, init_traj_samples = self._initialise(key)
-
-        # actions_BA = init_traj_samples[:, 0, :]
-        # obs_BO = jnp.tile(curr_obs_O, (actions_SA.shape[0], 1))
-        # batch_x_SOPA = jnp.concatenate([obs_SO, actions_SA], axis=1)
-        #
-        # key, _key = jrandom.split(key)
-        # batched_key = jrandom.split(_key, batch_x_SOPA.shape[0])
-        # batch_y_SO = f(batch_x_SOPA, batched_key)
-        #
-        # new_obs_SO, rewards_S = self._first_process_prev_output(init_traj_samples, batch_x_SOPA, batch_y_SO, curr_obs_O)
-        #
-        # batch = self._get_sample_x_batch(init_traj_samples, 0)
-        #
-        # self._get_next_x_batch()
-
-        """
-        This will be a scan
-        
-        Initially init CEM trajectories and instantiate some first step obs
-        Shape is batch, planning_horizon, ...
-        
-        then loop begins:
-        use initial obs
-        add the actions from the cem trajectory for that step
-        run over the dynamics model to get y
-        update_fn to get nobs aka obs + y = nobs
-        get reward
-        end loop
-        
-        resample_iCEM and run loop again, CAN'T BATCH AS IT REQUIRES PREVIOUS LOOP DETAILS
-        
-        somehow figure out another outer loop on top of it but I think that leads off each other        
-        """
+        f = self.get_f_mpc()
 
         def outer_loop():
             # this is the one until iter_nums == finished, idk how to calculate this tho
             return
 
-        def sample_ICEM():
+        def _iter_iCEM(iCEM_iter_state, unused):
+            iter_nums, mean, var, saved_traj, key = iCEM_iter_state
             # loops over the below and then takes trajectories to resample ICEM if not initial
-            return
+            init_obs_O, init_traj_samples_BS1, key = self._initialise(iter_nums, mean, var, key)  # TODO does key have to run throughout?
 
-        def _run_planning_horizon(runner_state, unused):
-            obs, actions = runner_state
-            obsacts = jnp.concatenate((obs, actions))
-            data_y = f(obsacts)
-            nobs = update_fn(obsacts, data_y)
-            return (nobs), Transition()
+            def _run_planning_horizon(runner_state, actions_BA):
+                obs_BO, key = runner_state
+                key, _key = jrandom.split(key)
+                obsacts_BOPA = jnp.concatenate((obs_BO, actions_BA), axis=-1)
+                batch_key = jrandom.split(_key, obs_BO.shape[0])
+                data_y_BO = f(obsacts_BOPA, batch_key)
+                nobs_BO = self._obs_update_fn(obsacts_BOPA, data_y_BO)
+                reward_S1 = jnp.ones((nobs_BO.shape[0], 1))  # self.env.reward_function(new_x_BOPA, nobs_BO) # TODO add the proper reward functions
+                return (nobs_BO, key), MPCTransition(obs=obs_BO, action=actions_BA, reward=reward_S1)
 
-        ((train_state, mem_state, env_state, last_obs_NO, last_done_N, key),
-         trajectory_batch_LNZ) = jax.lax.scan(_run_planning_horizon, runner_state, None,
-                                              actor.agent.agent_config.NUM_INNER_STEPS)
+            init_traj_samples_SB1 = jnp.swapaxes(init_traj_samples_BS1, 0, 1)
+            init_obs_BO = jnp.tile(init_obs_O, (init_traj_samples_BS1.shape[0], 1))
+            (end_obs, key), planning_traj = jax.lax.scan(_run_planning_horizon, (init_obs_BO, key), init_traj_samples_SB1, self.agent_config.PLANNING_HORIZON)
 
-        jax.vmap(run_planning_horizon)
+            # need to concat this trajectory with previous ones in the loop ie best_traj
+            all_rewards = jnp.concatenate(planning_traj.reward, saved_traj.reward)
+            all_states = jnp.concatenate(planning_traj.obs, saved_traj.obs)  # TODO it may actually only want the nobs
+            all_actions = jnp.concatenate(planning_traj.action, saved_traj.action)
+
+            # compute return on the entire training list
+            all_returns = compute_return(all_rewards, self.agent_config.DISCOUNT_FACTOR)
+
+            # best_current_return =
+            # best_action = etc etc
+            # TODO i think we can just do the best at the end after all iterations maybe?
+
+            # rank returns and find out the elite_idx and the correct elites
+            elite_idx = jnp.argsort(all_returns)[-self.agent_config.N_ELITES]  # TODO is this vmappable?
+            elites = all_actions[elite_idx, ...]
+
+            mean = np.mean(elites, axis=0)
+            var = np.var(elites, axis=0)
+
+            iter_nums += 1
+
+            n_save_elites = ceil(self.agent_config.N_ELITES * self.agent_config.XI)
+            save_idx = elite_idx[-n_save_elites:]
+            saved_rewards = all_actions[save_idx, ...]
+            saved_states = all_states[save_idx, ...]
+            saved_actions = all_actions[save_idx, ...]
+
+            return (iter_nums, mean, var, key), MPCTransition()
+
+        init_mean = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.env.action_space().shape[0]))
+        init_var = (jnp.ones_like(init_mean) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
+        (_, _, _, key), iCEM_traj = jax.lax.scan(_iter_iCEM, (0, init_mean, init_var, key), None, self.agent_config.iCEM_ITERS)
+
+
 
         return
+
+    def resample_iCEM(self):
+        self.iter_num += 1
+        nsamps = int(
+            max(
+                self.params.base_nsamps * (self.params.gamma ** -self.iter_num),
+                2 * self.params.n_elites,
+            )
+        )
+        if len(self.saved_rewards) > 0:
+            all_rewards = np.concatenate(
+                [np.array(self.traj_rewards).T, np.array(self.saved_rewards)], axis=0
+            )
+            all_states = np.concatenate(
+                [
+                    np.array(self.traj_states).transpose((1, 0, 2)),
+                    np.array(self.saved_states),
+                ],
+                axis=0,
+            )
+            all_actions = np.concatenate(
+                [self.traj_samples, self.saved_actions], axis=0
+            )
+        else:
+            all_rewards = np.array(self.traj_rewards).T
+            all_states = np.array(self.traj_states).transpose((1, 0, 2))
+            all_actions = self.traj_samples
+
+        all_returns = compute_return(all_rewards, self.params.discount_factor)
+        best_idx = np.argmax(all_returns)
+        best_current_return = all_returns[best_idx]
+        if best_current_return > self.best_return:
+            self.best_return = best_current_return
+            self.best_actions = all_actions[best_idx, ...]
+            self.best_obs = all_states[best_idx, ...]
+            self.best_rewards = all_rewards[best_idx, ...]
+        elite_idx = np.argsort(all_returns)[-self.params.n_elites:]
+        elites = all_actions[elite_idx, ...]
+        mean = np.mean(elites, axis=0)
+        var = np.var(elites, axis=0)
+        samples = iCEM_generate_samples(
+            nsamps,
+            self.params.planning_horizon,
+            self.params.beta,
+            mean,
+            var,
+            self.params.action_lower_bound,
+            self.params.action_upper_bound,
+        )
+        n_save_elites = ceil(self.params.n_elites * self.params.xi)
+        save_idx = elite_idx[-n_save_elites:]
+        self.saved_actions = all_actions[save_idx, ...]
+        self.saved_states = all_states[save_idx, ...]
+        self.saved_rewards = all_rewards[save_idx, ...]
+        if self.iter_num + 1 == self.params.num_iters:
+            samples = np.concatenate([samples, mean[None, :]], axis=0)
+        self.traj_samples = samples
+        # self.traj_samples = list(samples)
+        self.traj_states = []
+        self.traj_rewards = []
+        self.samples_done = False
 
 
 def test_MPC_algorithm():
