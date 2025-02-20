@@ -238,10 +238,11 @@ class MPCAgent(AgentBase):
         flatenned_path_y = overall_traj.y.reshape((-1, overall_traj.y.shape[-1]))
         # TODO check this actually flattens
 
-        # return ((flatenned_path_x, flatenned_path_y),
-        #         (joiner, flattened_overall_traj.action, flattened_overall_traj.reward))
+        joiner = jnp.concatenate((jnp.expand_dims(init_obs_O, axis=0), flattened_overall_traj.obs))
         return ((flatenned_path_x, flatenned_path_y),
-                (flattened_overall_traj.obs, flattened_overall_traj.action, flattened_overall_traj.reward))
+                (joiner, flattened_overall_traj.action, flattened_overall_traj.reward))
+        # return ((flatenned_path_x, flatenned_path_y),
+        #         (flattened_overall_traj.obs, flattened_overall_traj.action, flattened_overall_traj.reward))
 
 def test_MPC_algorithm():
     from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward
@@ -263,20 +264,20 @@ def test_MPC_algorithm():
 
     # with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
     path, (observations, actions, rewards) = mpc.run_algorithm_on_f(None, start_obs, _key)
-
-    # TODO it seems I am missing out some of the steps?
+    # batch_key = jrandom.split(_key, 25)
+    # path, (observations, actions, rewards) = jax.vmap(mpc.run_algorithm_on_f, in_axes=(None, None, 0))(None, start_obs, batch_key)
+    # path, observations, actions, rewards = path[0], observations[0], actions[0], rewards[0]
 
     print(time.time() - start_time)
 
-    observations = jnp.concatenate((jnp.expand_dims(start_obs, axis=0), observations))
     total_return = sum(rewards)
     print(f"MPC gets {total_return} return with {len(path[0])} queries based on itself")
     done = False
     rewards = []
     for i, action in enumerate(actions):
         next_obs, env_state, rew, done, info = env.step(key, env_state, action, env_params)
-        if (next_obs != observations[i + 1]).any():
-            error = np.linalg.norm(next_obs - observations[i + 1])
+        if (next_obs != observations[i]).any():
+            error = jnp.linalg.norm(next_obs - observations[i])
             print(f"i={i}, error={error}")
         rewards.append(rew)
         if done:
