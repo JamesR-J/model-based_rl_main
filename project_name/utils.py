@@ -33,6 +33,14 @@ class MPCTransition(NamedTuple):
     action:jnp.ndarray
     reward:jnp.ndarray
 
+class MPCTransitionXY(NamedTuple):
+    obs: jnp.ndarray
+    action:jnp.ndarray
+    reward:jnp.ndarray
+    x: jnp.ndarray
+    y: jnp.ndarray
+
+
 
 class TransitionFlashbax(NamedTuple):
     done: jnp.ndarray

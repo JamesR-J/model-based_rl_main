@@ -7,6 +7,7 @@ def get_config():
 
     config.ENV_NAME = "bacpendulum-v0"
     config.NORMALISE_ENV = False
+    config.ENV_HORIZON = 30
 
     config.NUM_INIT_DATA = 50
 
@@ -42,6 +43,8 @@ A - Action Dim
 C - Action Choices (mostly for discrete actions basically)
 Z - More dimensions when in a list
 U - Ensemble num
+I - Number of elite tops for iCEM
+R - Number of iCEM iterations
 P - Plus
 M - Minus
 

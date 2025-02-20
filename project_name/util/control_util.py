@@ -2,6 +2,7 @@ import numpy as np
 from .misc_util import batch_function
 import gymnasium
 import logging
+import jax.numpy as jnp
 
 try:
     # from gym.envs.mujoco.mujoco_env import MujocoEnv
@@ -21,7 +22,7 @@ def choose_subset(data_list, idx):
 
 
 def get_f_mpc(env, use_info_delta=False):
-    obs_dim = len(env.observation_space.low)
+    obs_dim = len(env.observation_space().low)
 
     def f(x):
         x = np.array(x)
