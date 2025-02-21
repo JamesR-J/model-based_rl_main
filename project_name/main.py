@@ -11,6 +11,9 @@ from jax.lib import xla_bridge
 jax.config.update("jax_enable_x64", False)  # TODO unsure if need or not but will check results
 
 
+# TODO MUST DO a key check for the MPC
+
+
 def main(_):
     config = get_config()
 

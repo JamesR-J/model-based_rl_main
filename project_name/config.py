@@ -10,6 +10,10 @@ def get_config():
     config.ENV_HORIZON = 30
 
     config.NUM_INIT_DATA = 50
+    config.TEST_SET_SIZE = 1000
+    config.NUM_EVAL_TRIALS = 5
+
+    config.NUM_ITERS = 300
 
     config.TOTAL_TIMESTEPS = 2300000
     config.NUM_DEVICES = 1

@@ -17,7 +17,8 @@ import numpy as np
 import gymnax
 from gymnax.environments import environment
 from flax import struct
-from project_name.dynamics_models import NeuralNetDynamicsModel
+from project_name.dynamics_models import NeuralNetDynamicsModel, MultiGpfsGp, BatchMultiGpfsGp
+from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole  # TODO add some register thing here instead
 
 
 @struct.dataclass  # TODO dodgy for now and need to change
@@ -34,8 +35,11 @@ def run_train(config):
     env = gym.make(config.ENV_NAME)
     reward_function = envs.reward_functions[config.ENV_NAME]
 
-    env, env_params = gymnax.make("MountainCarContinuous-v0")
+    # env, env_params = gymnax.make("MountainCarContinuous-v0")
     # TODO make these envs in gymnax style for continuous control
+
+    env = GymnaxPilcoCartPole()
+    env_params = env.default_params
 
     # TODO add the plot functionality as required
 
@@ -69,6 +73,7 @@ def run_train(config):
 
     actor = Agent(env=env, env_params=env_params, config=config, utils=None, key=_key)
 
+    # TODO update below so we can work in envs which are not generative
     def get_initial_data(config, env, f, key, plot_fn):
         def unif_random_sample_domain(low, high, key, n=1):
             unscaled_random_sample = jrandom.uniform(key, shape=(n, low.shape[0]))
@@ -91,105 +96,83 @@ def run_train(config):
         #     neatplot.save_figure(str(dumper.expdir / "obs_init"), "png", fig=fig_obs_init)
         return data_x_LOPA, data_y_LO
 
-    key, _key = jrandom.split(key)
-    init_data_x, init_data_y = get_initial_data(config, env, f, _key, None)  # TODO add plot function
-
-    key, _key = jrandom.split(key)
-    test_data_x, test_data_y = get_initial_data(config, env, f, _key, None)  # TODO add plot function
+    # key, _key = jrandom.split(key)
+    # init_data_x, init_data_y = get_initial_data(config, env, f, _key, None)  # TODO add plot function
+    #
+    # key, _key = jrandom.split(key)
+    # test_data_x, test_data_y = get_initial_data(config, env, f, _key, None)  # TODO add plot function
 
     key, _key = jrandom.split(key)
     dynamics_model = NeuralNetDynamicsModel(init_obs, env.action_space().sample(_key), hidden_dims=[50, 50],
                                             hidden_activations=jax.nn.swish, is_probabilistic=True)
 
+    dynamics_model = MultiGpfsGp()
+
     ### Gets some groundtruth data, we batch it please at some points  # TODO batch this
-    true_path, test_mpc_data = actor.agent.run_algorithm_on_f(f, key)
+    def execute_gt_mpc(init_obs, key):
+        key, _key = jrandom.split(key)
+        full_path, test_mpc_data = actor.agent.run_algorithm_on_f(None, init_obs, _key)  # TODO need to use the dervied f and not the one inside MPC
+        path_lengths = len(full_path[0])  # TODO should we turn the output into a dict for x and y ?
+        true_path = actor.agent.get_exe_path_crop(full_path)
 
-    def train():
-        key = jax.random.PRNGKey(config.SEED)
+        key, _key = jrandom.split(key)
+        test_points = jax.tree_util.tree_map(lambda x: jrandom.choice(_key, x,
+                                                                      (config.TEST_SET_SIZE // config.NUM_EVAL_TRIALS, )), true_path)
+        # TODO ensure it samples the same pairs
 
-        actor = Agent(env=env, env_params=env_params, config=config, utils=None, key=key)
-        train_state, mem_state = actor.initialise()
+        return true_path, test_points
 
-        new_config = actor.agent.config  # TODO why this causing errors?
+    batch_key = jrandom.split(key, config.NUM_EVAL_TRIALS)
+    true_path, test_points = jax.vmap(execute_gt_mpc, in_axes=(None, 0))(init_obs, batch_key)
+    flattened_true_path = jax.tree_util.tree_map(lambda x: x.reshape((x[0] * x[1], -1)), true_path)
+    flattened_test_points = jax.tree_util.tree_map(lambda x: x.reshape((config.TEST_SET_SIZE, -1)), test_points)
 
-        reset_key = jrandom.split(key, config.NUM_ENVS)
-        init_obs_NO, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)
+    # # Plot groundtruth paths and print info  # TODO plot these gt
+    # ax_gt, fig_gt = plot_fn(true_path, ax_gt, fig_gt, domain, "samp")
+    # returns.append(compute_return(output[2], 1))
+    # stats = {"Mean Return": np.mean(returns), "Std Return:": np.std(returns)}
 
-        runner_state = (train_state, mem_state, env_state, init_obs_NO, jnp.zeros(config.NUM_ENVS, dtype=bool), key)
+    # TODO add some hyperparameter fit on the GT data or if we are evaluatning the hyperparams
 
-        def _run_inner_update(update_runner_state, unused):
-            runner_state, update_steps = update_runner_state
+    def get_start_obs(obs=None):
+        return obs
 
-            def _run_episode_step(runner_state, unused):
-                # take initial env_state
-                train_state, mem_state, env_state, obs_NO, done_N, key = runner_state
+    init_obs = get_start_obs()
 
-                mem_state, action_NA, key = actor.act(train_state, mem_state, obs_NO, done_N, key)
+    def get_next_point(init_data, curr_obs):
+        # TODO some if satatement if our input data does not exist as not using generative approach
 
-                # step in env
-                # key, _key = jrandom.split(key)
-                key_step = jrandom.split(key, config.NUM_ENVS)
-                nobs_NO, env_state, reward_N, ndone_N, info = jax.vmap(env.step, in_axes=(0, 0, 0, None),
-                                                              axis_name="batch_axis")(key_step,
-                                                                                      env_state,
-                                                                                      action_NA,
-                                                                                      env_params
-                                                                                      )
+        # TODO if statement if using an acquisition function, idk how to do this so that we don't require if statement
 
-                # mem_state = actor.update_encoding(train_state, mem_state, nobs_NO, action_NA, reward_N, ndone_N, key)
+        # If using MPC then
+        model = dynamics_model(init_data)
 
-                transition = Transition(ndone_N, action_NA, reward_N, obs_NO, mem_state,
-                                        # env_state,  # TODO have added for info purposes
-                                        info)
+        def _postmean_fn(x):
+            mu_list, std_list = model.get_post_mu_cov(x, full_cov=False)
+            mu_list = np.array(mu_list)
+            mu_tup_for_x = list(zip(*mu_list))
+            return mu_tup_for_x
 
-                return (train_state, mem_state, env_state, nobs_NO, ndone_N, key), transition
+        policy = partial(actor.agent.execute_mpc, f=_postmean_fn(model))
+        action = policy(curr_obs)
+        x_next = jnp.concatenate([curr_obs, action])
 
-            ((train_state, mem_state, env_state, last_obs_NO, last_done_N, key),
-             trajectory_batch_LNZ) = jax.lax.scan(_run_episode_step, runner_state, None, actor.agent.agent_config.NUM_INNER_STEPS)
-            # TODO have changed the above too
 
-            train_state, mem_state, agent_info, key = actor.update(train_state, mem_state,  last_obs_NO,  last_done_N,
-                                                                   key, trajectory_batch_LNZ)
 
-            def callback(traj_batch, env_stats, agent_stats, update_steps):
-                avg_episode_end_reward = traj_batch.info["reward"][traj_batch.info["returned_episode"]].mean()
-                metric_dict = {"Total Steps": update_steps * config.NUM_ENVS * actor.agent.agent_config.NUM_INNER_STEPS,
-                               "Total_Episodes": update_steps * config.NUM_ENVS,
-                               # "avg_reward": traj_batch.reward.mean(),
-                               "avg_returns": traj_batch.info["returned_episode_returns"][traj_batch.info["returned_episode"]].mean(),
-                               "avg_episode_end_reward": jnp.where(jnp.isnan(avg_episode_end_reward), -100.0, avg_episode_end_reward),
-                               "avg_episode_length": traj_batch.info["returned_episode_lengths"][traj_batch.info["returned_episode"]].mean(),
-                               "avg_action": traj_batch.action.mean()}
-                # TODO have changed the num_inner_steps above
+        return
 
-                # shape is LN, so we are averaging over the num_envs and episode
-                for item in agent_info:
-                    metric_dict[f"{item}"] = agent_stats[item]
+    def _main_loop():
+        # log some info that we need basically
 
-                # print(traj_batch.reward.shape)
-                # print(traj_batch.reward.mean())
-                # print(traj_batch.info["reward"][traj_batch.info["returned_episode"]])
-                # print("NEW ONE")
+        # get next point
 
-                # print(traj_batch.info["reward"][traj_batch.info["returned_episode"]].mean())
+        # periodically run evaluation and plot
 
-                wandb.log(metric_dict)
+        # Query function, update data
 
-            # env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
-            #                                                                         collapsed_trajectory_batch,
-            #                                                                         obs))
+        return
 
-            jax.experimental.io_callback(callback, None, trajectory_batch_LNZ, env_state,
-                                         agent_info, update_steps)
-
-            update_steps = update_steps + 1
-
-            return ((train_state, mem_state, env_state, last_obs_NO, last_done_N, key), update_steps), None
-
-        runner_state, _ = jax.lax.scan(_run_inner_update,(runner_state, 0),None, new_config.NUM_EPISODES)
-        # TODO have changed the above
-
-        return {"runner_state": runner_state}
+    _main_loop()
 
     return train
 
