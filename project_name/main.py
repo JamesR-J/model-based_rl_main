@@ -6,12 +6,12 @@ import jax
 from jax.lib import xla_bridge
 
 
-
-
-jax.config.update("jax_enable_x64", False)  # TODO unsure if need or not but will check results
+jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
 
 
 # TODO MUST DO a key check for the MPC
+
+# TODO sort out this aidan scannall GPJax types, and also to make it work well
 
 
 def main(_):

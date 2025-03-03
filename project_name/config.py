@@ -7,7 +7,8 @@ def get_config():
 
     config.ENV_NAME = "bacpendulum-v0"
     config.NORMALISE_ENV = False
-    config.ENV_HORIZON = 30
+    config.ENV_HORIZON = 25
+    config.GENERATIVE_ENV = False
 
     config.NUM_INIT_DATA = 50
     config.TEST_SET_SIZE = 1000

@@ -183,25 +183,25 @@ class MPCAgent(AgentBase):
         # TODO compare against old np.polynomial.polynomial.polyval(discount_factor, rewards)
         return jnp.polyval(rewards, self.agent_config.DISCOUNT_FACTOR)  # TODO check discount factor does not change
 
-    @partial(jax.jit, static_argnums=(0, 4, 5))
+    @partial(jax.jit, static_argnums=(0, 1, 4, 5))
     def run_algorithm_on_f(self, f, init_obs_O, key, horizon, actions_per_plan):
-        def _get_f_mpc(x_OPA, use_info_delta=False):  # TODO this should be generalised out of class at some point
-            obs_O = x_OPA[:self.obs_dim]
-            action_A = x_OPA[self.obs_dim:]
-            env_state = EnvState(x=obs_O[0], x_dot=obs_O[1], theta=obs_O[2], theta_dot=obs_O[3],
-                                 time=0)  # TODO specific for cartpole, need to generalise this
-            nobs_O, _, _, _, info = self.env.step(key, env_state, action_A, self.env_params)
-            # if use_info_delta:  # TODO do we need the info delta?
-            #     return info["delta_obs"]
-            # else:
-            return nobs_O - obs_O
+        # def _get_f_mpc(x_OPA, use_info_delta=False):  # TODO this should be generalised out of class at some point
+        #     obs_O = x_OPA[:self.obs_dim]
+        #     action_A = x_OPA[self.obs_dim:]
+        #     env_state = EnvState(x=obs_O[0], x_dot=obs_O[1], theta=obs_O[2], theta_dot=obs_O[3],
+        #                          time=0)  # TODO specific for cartpole, need to generalise this
+        #     nobs_O, _, _, _, info = self.env.step(key, env_state, action_A, self.env_params)
+        #     # if use_info_delta:  # TODO do we need the info delta?
+        #     #     return info["delta_obs"]
+        #     # else:
+        #     return nobs_O - obs_O
 
         def _outer_loop(outer_loop_state, unused):
             init_obs_O, init_mean, init_var, init_shift_actions_SB1, key = outer_loop_state
 
-            init_traj = MPCTransition(obs=jnp.zeros((horizon, 1, self.obs_dim)),
-                                      action=jnp.zeros((horizon, 1, self.action_dim)),
-                                      reward=jnp.ones((horizon, 1, 1)) * -100)   # TODO this may need to be something other than zeros in case of negative rewards
+            init_traj = MPCTransition(obs=jnp.zeros((self.agent_config.PLANNING_HORIZON, 1, self.obs_dim)),
+                                      action=jnp.zeros((self.agent_config.PLANNING_HORIZON, 1, self.action_dim)),
+                                      reward=jnp.ones((self.agent_config.PLANNING_HORIZON, 1, 1)) * -100)   # TODO this may need to be something other than zeros in case of negative rewards
             init_obs_BO = jnp.tile(init_obs_O,(self.agent_config.BASE_NSAMPS + self.n_keep, 1))
             # TODO assumed const sample n for now
 
@@ -211,7 +211,7 @@ class MPCAgent(AgentBase):
                 key, _key = jrandom.split(key)  # TODO do I need this?
                 init_traj_samples_BS1 = self._iCEM_generate_samples(_key,
                                                            self.agent_config.BASE_NSAMPS,  # TODO have removed adaptive num_samples
-                                                           horizon,
+                                                           self.agent_config.PLANNING_HORIZON,
                                                            self.agent_config.BETA,
                                                            mean,
                                                            var,
@@ -223,7 +223,8 @@ class MPCAgent(AgentBase):
                     key, _key = jrandom.split(key)
                     obsacts_BOPA = jnp.concatenate((obs_BO, actions_BA), axis=-1)
                     batch_key = jrandom.split(_key, obs_BO.shape[0])
-                    data_y_BO = jax.vmap(_get_f_mpc)(obsacts_BOPA, batch_key)
+                    data_y_BO = jax.vmap(f)(obsacts_BOPA, batch_key)
+                    # data_y_BO = jax.vmap(_get_f_mpc)(obsacts_BOPA, batch_key)
                     nobs_BO = self._obs_update_fn(obsacts_BOPA, data_y_BO)
                     reward_S1 = self.env.reward_function(obsacts_BOPA, nobs_BO, self.env_params)
                     return (nobs_BO, key), MPCTransitionXY(obs=nobs_BO, action=actions_BA, reward=jnp.expand_dims(reward_S1, axis=-1),
@@ -233,7 +234,7 @@ class MPCAgent(AgentBase):
                 init_traj_samples_SB1 = jnp.swapaxes(init_traj_samples_BS1, 0, 1)
                 init_traj_samples_SB1 = jnp.concatenate((init_traj_samples_SB1, init_shift_actions_SB1), axis=1)
                 (end_obs, key), planning_traj = jax.lax.scan(jax.jit(_run_planning_horizon), (init_obs_BO, key),
-                                                             init_traj_samples_SB1, horizon)
+                                                             init_traj_samples_SB1, self.agent_config.PLANNING_HORIZON)
 
                 # need to concat this trajectory with previous ones in the loop ie best_traj
                 planning_traj_minus_xy = MPCTransition(obs=planning_traj.obs, action=planning_traj.action, reward=planning_traj.reward)
@@ -305,9 +306,9 @@ class MPCAgent(AgentBase):
 
         outer_loop_steps = horizon // actions_per_plan  # TODO ensure this is an equal division
 
-        init_mean = jnp.zeros((horizon, self.env.action_space().shape[0]))
+        init_mean = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.env.action_space().shape[0]))
         init_var = (jnp.ones_like(init_mean) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
-        shift_actions = jnp.zeros((horizon, self.n_keep, self.action_dim))  # TODO is this okay to add zeros?
+        shift_actions = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.n_keep, self.action_dim))  # TODO is this okay to add zeros?
         # num_samples = self._generate_num_samples_array()
 
         (_, _, _, _, key), overall_traj = jax.lax.scan(_outer_loop, (init_obs_O, init_mean, init_var, shift_actions, key), None, outer_loop_steps)
@@ -335,9 +336,9 @@ class MPCAgent(AgentBase):
 
         exe_path, output = self.run_algorithm_on_f(f, obs, key, horizon=1, actions_per_plan=1)
 
-        action = output[0].action
+        action = output[1]
 
-        return action, samples
+        return action, exe_path
 
 def test_MPC_algorithm():
     from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward
@@ -354,19 +355,29 @@ def test_MPC_algorithm():
 
     env = GymnaxPilcoCartPole()
     env_params = env.default_params
+    obs_dim = len(env.observation_space(env_params).low)
 
     start_obs, env_state = env.reset(_key)
 
     mpc = MPCAgent(env, env_params, get_config(), None, key)
     key, _key = jrandom.split(key)
 
+    def _get_f_mpc(x_OPA, key, use_info_delta=False):  # TODO this should be generalised out of class at some point
+        obs_O = x_OPA[:obs_dim]
+        action_A = x_OPA[obs_dim:]
+        env_state = EnvState(x=obs_O[0], x_dot=obs_O[1], theta=obs_O[2], theta_dot=obs_O[3], time=0)  # TODO specific for cartpole, need to generalise this
+        nobs_O, _, _, _, info = env.step(key, env_state, action_A, env_params)
+        return nobs_O - obs_O
+
+    f = _get_f_mpc  # TODO kinda weak but okay for now
+
     import time
     start_time = time.time()
 
     # with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
     with jax.disable_jit(disable=False):
-        path, (observations, actions, rewards) = mpc.run_algorithm_on_f(None, start_obs, _key,
-                                                                        horizon=mpc.agent_config.PLANNING_HORIZON,
+        path, (observations, actions, rewards) = mpc.run_algorithm_on_f(f, start_obs, _key,
+                                                                        horizon=25,
                                                                         actions_per_plan=mpc.agent_config.ACTIONS_PER_PLAN)
     # batch_key = jrandom.split(_key, 25)
     # path, (observations, actions, rewards) = jax.vmap(mpc.run_algorithm_on_f, in_axes=(None, None, 0))(None, start_obs, batch_key)
