@@ -48,6 +48,15 @@ class MPCTransitionXYR(NamedTuple):
     y: jnp.ndarray
     returns: jnp.ndarray
 
+class PlotTuple(NamedTuple):
+    x: jnp.ndarray
+    y: jnp.ndarray
+
+class RealPath(NamedTuple):
+    x: jnp.ndarray
+    y: jnp.ndarray
+    y_hat: jnp.ndarray
+
 
 
 class TransitionFlashbax(NamedTuple):

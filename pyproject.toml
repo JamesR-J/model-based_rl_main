@@ -20,6 +20,7 @@ dependencies = [
     "chex>=0.1.89",
     "tensorflow-probability>=0.22.1",
     "multidispatch==0.2.0",
+    "neatplot>=0.1.0",
 ]
 requires-python = "==3.10.*"
 readme = "README.md"

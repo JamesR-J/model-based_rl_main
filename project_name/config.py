@@ -5,17 +5,20 @@ def get_config():
     config = config_dict.ConfigDict()
     config.SEED = 42
 
-    config.ENV_NAME = "bacpendulum-v0"
-    config.NORMALISE_ENV = False
+    config.ENV_NAME = "pilcocartpole-v0"
+    config.NORMALISE_ENV = True
     config.ENV_HORIZON = 25
     config.GENERATIVE_ENV = True  # False
     config.NO_ENV_RUN = False
 
+    config.SAVE_FIGURES = True
+
     config.NUM_INIT_DATA = 50
     config.TEST_SET_SIZE = 1000
     config.NUM_EVAL_TRIALS = 5
+    config.EVAL_FREQ = 10
 
-    config.NUM_ITERS = 300
+    config.NUM_ITERS = 1#00
 
     config.TOTAL_TIMESTEPS = 2300000
     config.NUM_DEVICES = 1

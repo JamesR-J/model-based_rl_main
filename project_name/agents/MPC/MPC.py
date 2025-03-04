@@ -489,7 +489,7 @@ def test_MPC_algorithm():
 
     # with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
     with jax.disable_jit(disable=False):
-        path, (observations, actions, rewards) = mpc.run_algorithm_on_f(f, start_obs, _key,
+        path, (observations, actions, rewards), _ = mpc.run_algorithm_on_f(f, start_obs, _key,
                                                                         horizon=25,
                                                                         actions_per_plan=mpc.agent_config.ACTIONS_PER_PLAN)
     # batch_key = jrandom.split(_key, 25)

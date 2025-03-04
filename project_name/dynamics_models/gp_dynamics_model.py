@@ -8,6 +8,7 @@ import optax
 from typing import List, Tuple, Dict, Optional, NamedTuple, Any
 from functools import partial
 import GPJax_AScannell as gpjaxas
+import optax
 
 
 class MOGP:
@@ -30,6 +31,8 @@ class MOGP:
         self.mean_function = gpjaxas.mean_functions.Zero(output_dim=self.action_dim)
 
         self.gp = gpjaxas.models.GPModel(self.kernel, self.likelihood, self.mean_function, num_latent_gps=num_latent_gps)
+
+        # opt_init, opt_update, get_params = optax.adam(1e-3)
 
     def create_train_state(self, obs):
         params = self.gp.get_params()

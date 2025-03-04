@@ -174,7 +174,7 @@ class GymnaxPilcoCartPole(environment.Environment[EnvState, EnvParams]):
         """Number of actions possible in environment."""
         return 2
 
-    def action_space(self, params: Optional[EnvParams] = None) -> spaces.Discrete:
+    def action_space(self, params: Optional[EnvParams] = None) -> spaces.Box:
         """Action space of the environment."""
         return spaces.Box(-1, 1, shape=(1,))
 

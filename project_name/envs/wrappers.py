@@ -1,52 +1,56 @@
 from gymnasium import Env, spaces
 from copy import deepcopy
 import numpy as np
+from project_name.utils import PlotTuple
 # import tensorflow as tf
 
 
 class NormalizedEnv(Env):
-    def __init__(self, wrapped_env):
+    def __init__(self, wrapped_env, env_params):
         """
         Normalizes obs to be between -1 and 1
         """
         self._wrapped_env = wrapped_env
-        self.unnorm_action_space = self._wrapped_env.action_space
-        self.unnorm_observation_space = self._wrapped_env.observation_space
-        self.unnorm_obs_space_size = (
-            self.unnorm_observation_space.high - self.unnorm_observation_space.low
-        )
-        self.unnorm_action_space_size = (
-            self.unnorm_action_space.high - self.unnorm_action_space.low
-        )
-        self.action_space = spaces.Box(
-            low=-np.ones_like(self.unnorm_action_space.low),
-            high=np.ones_like(self.unnorm_action_space.high),
-        )
-        self.observation_space = spaces.Box(
-            low=-np.ones_like(self.unnorm_observation_space.low),
-            high=np.ones_like(self.unnorm_observation_space.high),
-        )
+        self.unnorm_action_space = self._wrapped_env.action_space()
+        self.unnorm_observation_space = self._wrapped_env.observation_space(env_params)
+        self.unnorm_obs_space_size = self.unnorm_observation_space.high - self.unnorm_observation_space.low
+        self.unnorm_action_space_size = self.unnorm_action_space.high - self.unnorm_action_space.low
+        # self.action_space = spaces.Box(low=-np.ones_like(self.unnorm_action_space.low),
+        #                                high=np.ones_like(self.unnorm_action_space.high)
+        #                                )
+        # self.observation_space = spaces.Box(low=-np.ones_like(self.unnorm_observation_space.low),
+        #                                     high=np.ones_like(self.unnorm_observation_space.high)
+        #                                     )
+
+    def action_space(self, params=None) -> spaces.Box:
+        """Action space of the environment."""
+        return self.unnorm_action_space
+
+    def observation_space(self, params=None) -> spaces.Box:
+        """Observation space of the environment."""
+        return self.unnorm_observation_space
 
     @property
     def wrapped_env(self):
         return self._wrapped_env
 
-    def reset(self, obs=None, seed=42, options=None):  # TODO adjust this seed thing and options as it is randomised
-        if obs is not None:
-            unnorm_obs = self.unnormalize_obs(obs)
-            unnorm_obs = self._wrapped_env.reset(obs=unnorm_obs)
-        else:
-            unnorm_obs = self._wrapped_env.reset()
-        return self.normalize_obs(unnorm_obs)
+    def reset(self, key, params=None):
+        # if obs is not None:
+        #     unnorm_obs = self.unnormalize_obs(obs)
+        #     unnorm_obs = self._wrapped_env.reset(key, params)
+        # else:
+        unnorm_obs, env_state = self._wrapped_env.reset(key, params)
+        return self.normalize_obs(unnorm_obs), env_state
 
-    def step(self, action):
+    def step(self, key, env_state, action, env_params):
         unnorm_action = self.unnormalize_action(action)
-        unnorm_obs, rew, done, info = self._wrapped_env.step(unnorm_action)
-        if "delta_obs" in info:
-            unnorm_delta_obs = info["delta_obs"]
-            norm_delta_obs = unnorm_delta_obs / self.unnorm_obs_space_size * 2
-            info["delta_obs"] = norm_delta_obs
-        return self.normalize_obs(unnorm_obs), float(rew), done, info
+        # TODO if we feed in the custom env_state do we need to change this?
+        unnorm_obs, new_env_state, rew, done, info = self._wrapped_env.step(key, env_state, unnorm_action, env_params)
+        # if "delta_obs" in info:
+        #     unnorm_delta_obs = info["delta_obs"]
+        #     norm_delta_obs = unnorm_delta_obs / self.unnorm_obs_space_size * 2
+        #     info["delta_obs"] = norm_delta_obs
+        return self.normalize_obs(unnorm_obs), new_env_state, rew, done, info
 
     def render(self, *args, **kwargs):
         return self._wrapped_env.render(*args, **kwargs)
@@ -108,12 +112,12 @@ class NormalizedEnv(Env):
         return unnorm_obs
 
     def unnormalize_action(self, action):
-        if len(action.shape) == 1:
-            low = self.unnorm_action_space.low
-            size = self.unnorm_action_space_size
-        else:
-            low = self.unnorm_action_space.low[None, :]
-            size = self.unnorm_action_space_size[None, :]
+        # if len(action.shape) == 1:
+        low = self.unnorm_action_space.low
+        size = self.unnorm_action_space_size
+        # else:
+        #     low = self.unnorm_action_space.low[None, :]
+        #     size = self.unnorm_action_space_size[None, :]
         act01 = (action + 1) / 2
         act_ranged = act01 * size
         unnorm_act = act_ranged + low
@@ -150,36 +154,20 @@ def make_normalized_reward_function(norm_env, reward_function, use_tf=False):
         rewards = reward_function(unnorm_x, unnorm_y)
         return rewards
 
-    if not use_tf:
-        return norm_rew_fn
-
-    def tf_norm_rew_fn(x, y):
-        norm_obs = x[..., :obs_dim]
-        action = x[..., obs_dim:]
-        unnorm_action = norm_env.unnormalize_action(action)
-        unnorm_obs = norm_env.unnormalize_obs(norm_obs)
-        unnorm_x = tf.concat([unnorm_obs, unnorm_action], axis=-1)
-        unnorm_y = norm_env.unnormalize_obs(y)
-        rewards = reward_function(unnorm_x, unnorm_y)
-        return rewards
-
-    return tf_norm_rew_fn
+    return norm_rew_fn
 
 
-def make_normalized_plot_fn(norm_env, plot_fn):
-    obs_dim = norm_env.observation_space.low.size
+def make_normalized_plot_fn(norm_env, env_params, plot_fn):
+    obs_dim = norm_env.observation_space().low.size
     wrapped_env = norm_env.wrapped_env
     # Set domain
-    low = np.concatenate(
-        [wrapped_env.observation_space.low, wrapped_env.action_space.low]
-    )
-    high = np.concatenate(
-        [wrapped_env.observation_space.high, wrapped_env.action_space.high]
-    )
+    low = np.concatenate([wrapped_env.observation_space(env_params).low,
+                          np.expand_dims(np.array(wrapped_env.action_space().low), axis=0)])
+    high = np.concatenate([wrapped_env.observation_space(env_params).high,
+                           np.expand_dims(np.array(wrapped_env.action_space().high), axis=0)])
     unnorm_domain = [elt for elt in zip(low, high)]
 
     def norm_plot_fn(path, ax=None, fig=None, domain=None, path_str="samp", env=None):
-        path = deepcopy(path)
         if path:
             x = np.array(path.x)
             norm_obs = x[..., :obs_dim]
@@ -187,16 +175,13 @@ def make_normalized_plot_fn(norm_env, plot_fn):
             unnorm_action = norm_env.unnormalize_action(action)
             unnorm_obs = norm_env.unnormalize_obs(norm_obs)
             unnorm_x = np.concatenate([unnorm_obs, unnorm_action], axis=-1)
-            path.x = list(unnorm_x)
             try:
-                y = np.array(path.y)
+                y = path.y
                 unnorm_y = norm_env.unnormalize_obs(y)
-                path.y = list(unnorm_y)
             except AttributeError:
                 pass
-        return plot_fn(
-            path, ax=ax, fig=fig, domain=unnorm_domain, path_str=path_str, env=env
-        )
+            path = PlotTuple(x=unnorm_x, y=unnorm_y)
+        return plot_fn(path, ax=ax, fig=fig, domain=unnorm_domain, path_str=path_str, env=env)
 
     return norm_plot_fn
 
@@ -233,29 +218,7 @@ def make_update_obs_fn(env, teleport=False, use_tf=False):
         wrapped_output = modded_output + env.observation_space.low
         return wrapped_output
 
-    if not use_tf:
-        return update_obs_fn
-
-    def tf_update_obs_fn(x, y):
-        start_obs = x[..., :obs_dim]
-        delta_obs = y[..., -obs_dim:]
-        output = start_obs + delta_obs
-        if not teleport:
-            return output
-        shifted_output = output - env.observation_space.low
-        if len(x.shape) == 2:
-            mask = np.tile(periodic, (x.shape[0], 1))
-        else:
-            mask = periodic
-        shifted_output = tf.math.floormod(
-            shifted_output, obs_range
-        ) * mask + shifted_output * (1 - mask)
-        # np.remainder(shifted_output, obs_range, where=mask, out=shifted_output)
-        modded_output = shifted_output
-        wrapped_output = modded_output + env.observation_space.low
-        return wrapped_output
-
-    return tf_update_obs_fn
+    return update_obs_fn
 
 
 def test_obs(wrapped_env, obs):
