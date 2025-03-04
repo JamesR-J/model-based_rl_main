@@ -19,6 +19,9 @@ def get_MPC_config():
 
     config.BETA = 3.0
 
+    config.ACQUISITION_SAMPLES = 15
+    config.OPTIMISATION_ITERS = 5  # TODO think this shoud be diff from config.iCEM_ITERS but should check
+
     """
     Current iCEM adaptions
     Use constant batch size

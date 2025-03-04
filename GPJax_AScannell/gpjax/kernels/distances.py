@@ -3,12 +3,13 @@ from typing import Optional
 
 from GPJax_AScannell.gpjax.config import default_float
 from jax import numpy as jnp
+import jax
 
 
-def scaled_squared_euclidean_distance(
-    x1,
-    x2,
-    lengthscales: Optional = jnp.array([1.0], dtype=default_float())):
+jax.config.update("jax_enable_x64", True)
+
+
+def scaled_squared_euclidean_distance(x1, x2, lengthscales: Optional = jnp.array([1.0], dtype=default_float())):
     """Returns ‖(X1 - X2ᵀ) / ℓ‖², i.e. the squared L₂-norm.
 
     :param x1: Single input array [input_dim]

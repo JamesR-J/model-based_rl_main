@@ -285,7 +285,7 @@ def base_conditional(
 def base_conditional_with_lm(
     Kmn: Array,
     Lm: Array,
-    Knn: Union[Array, Array],
+    Knn: Union[Array, Array],  # n is new data, m is dataset
     f: Array,
     full_cov: Optional[bool] = False,
     q_sqrt: Optional[Union[Array, Array]] = None,

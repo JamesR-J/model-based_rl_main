@@ -25,8 +25,6 @@ class MOGP:
         num_latent_gps = self.obs_dim
 
         ind_kernels = gpjaxas.kernels.SquaredExponential(lengthscales=jnp.ones(self.input_dim, dtype=jnp.float64), variance=2.0)
-        # self.kernel = gpjaxas.kernels.SquaredExponential(lengthscales=jnp.ones(self.input_dim, dtype=jnp.float64),
-        #                                                  variance=2.0)
         self.kernel = gpjaxas.kernels.SeparateIndependent([ind_kernels for _ in range(self.obs_dim)])
         self.likelihood = gpjaxas.likelihoods.Gaussian(variance=3.0)
         self.mean_function = gpjaxas.mean_functions.Zero(output_dim=self.action_dim)
@@ -38,8 +36,8 @@ class MOGP:
         params["train_data"] = jnp.expand_dims(jnp.concatenate((obs, jnp.zeros(self.action_dim))), axis=0)
         return params
 
-    def get_post_mu_cov(self, XNew, params, full_cov=False):  # TODO if no data then return the prior mu and var
-        mu, std = self.gp.predict_f(params, XNew)
+    def get_post_mu_cov(self, XNew, params, train_data=None, full_cov=False):  # TODO if no data then return the prior mu and var
+        mu, std = self.gp.predict_f(params, XNew, train_data=train_data, full_cov=full_cov)
         return mu, std
 
     def return_posterior_samples(self, XNew, params, key):

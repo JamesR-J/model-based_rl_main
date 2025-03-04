@@ -7,8 +7,6 @@ import numpy as np
 from math import ceil
 import logging
 
-
-from project_name.alg.algorithms import BatchAlgorithm
 from project_name.util.misc_util import dict_to_namespace
 from project_name.util.control_util import compute_return, iCEM_generate_samples
 from project_name.util.domain_util import project_to_domain
@@ -22,7 +20,7 @@ import colorednoise
 import jax.random as jrandom
 from gymnax.environments import environment
 from flax import struct
-from project_name.utils import MPCTransition, MPCTransitionXY
+from project_name.utils import MPCTransition, MPCTransitionXY, MPCTransitionXYR
 import gymnax
 from project_name.config import get_config
 from typing import Union, Tuple
@@ -223,7 +221,7 @@ class MPCAgent(AgentBase):
                     key, _key = jrandom.split(key)
                     obsacts_BOPA = jnp.concatenate((obs_BO, actions_BA), axis=-1)
                     batch_key = jrandom.split(_key, obs_BO.shape[0])
-                    data_y_BO = jax.vmap(f)(obsacts_BOPA, batch_key)
+                    data_y_BO = jax.vmap(f)(obsacts_BOPA, batch_key)  # TODO check what this vmap is for, can we vmap outside the whole loop?
                     # data_y_BO = jax.vmap(_get_f_mpc)(obsacts_BOPA, batch_key)
                     nobs_BO = self._obs_update_fn(obsacts_BOPA, data_y_BO)
                     reward_S1 = self.env.reward_function(obsacts_BOPA, nobs_BO, self.env_params)
@@ -298,11 +296,12 @@ class MPCAgent(AgentBase):
                                         jnp.zeros((actions_per_plan, self.action_dim))))
             end_var = (jnp.ones_like(end_mean) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
 
-            return (curr_obs_O, end_mean, end_var, shifted_actions_S1A, key), MPCTransitionXY(obs=planned_iCEM_traj_flipped.obs,
+            return (curr_obs_O, end_mean, end_var, shifted_actions_S1A, key), MPCTransitionXYR(obs=planned_iCEM_traj_flipped.obs,
                                                                                             action=planned_iCEM_traj_flipped.action,
                                                                                             reward=planned_iCEM_traj_flipped.reward,
                                                                                             x=iCEM_traj.x,
-                                                                                            y=iCEM_traj.y)
+                                                                                            y=iCEM_traj.y,
+                                                                                            returns=all_returns_R1)
 
         outer_loop_steps = horizon // actions_per_plan  # TODO ensure this is an equal division
 
@@ -313,8 +312,8 @@ class MPCAgent(AgentBase):
 
         (_, _, _, _, key), overall_traj = jax.lax.scan(_outer_loop, (init_obs_O, init_mean, init_var, shift_actions, key), None, outer_loop_steps)
 
-        overall_traj_minus_xy = MPCTransition(obs=overall_traj.obs, action=overall_traj.action, reward=overall_traj.reward)
-        flattened_overall_traj = jax.tree_util.tree_map(lambda x: x.reshape(x.shape[0] * x.shape[1], -1), overall_traj_minus_xy)
+        overall_traj_minus_xyr = MPCTransition(obs=overall_traj.obs, action=overall_traj.action, reward=overall_traj.reward)
+        flattened_overall_traj = jax.tree_util.tree_map(lambda x: x.reshape(x.shape[0] * x.shape[1], -1), overall_traj_minus_xyr)
         # TODO check this flattens correctly
 
         flatenned_path_x = overall_traj.x.reshape((-1, overall_traj.x.shape[-1]))
@@ -323,22 +322,136 @@ class MPCAgent(AgentBase):
 
         joiner = jnp.concatenate((jnp.expand_dims(init_obs_O, axis=0), flattened_overall_traj.obs))
         return ((flatenned_path_x, flatenned_path_y),
-                (joiner, flattened_overall_traj.action, flattened_overall_traj.reward))
+                (joiner, flattened_overall_traj.action, flattened_overall_traj.reward),
+                overall_traj.returns)
 
-    def get_exe_path_crop(self, planned_states):
-        # TODO add some clip if it goes outside the domain
+    def get_exe_path_crop(self, planned_states, planned_actions):
+        obs = planned_states[:-1]
+        nobs = planned_states[1:]
+        x = jnp.concatenate((obs, planned_actions), axis=-1)
+        y = nobs - obs
 
-        return planned_states
+        # TODO add some clip if it goes outside the domain and project to domain as well as terminal sorting out
+
+        return {"exe_path_x": x, "exe_path_y": y}
 
     def execute_mpc(self, f, obs, key):
 
         # TODO add some if statement and stuff if it will be open-loop
 
-        exe_path, output = self.run_algorithm_on_f(f, obs, key, horizon=1, actions_per_plan=1)
+        full_path, output, _ = self.run_algorithm_on_f(f, obs, key, horizon=1, actions_per_plan=1)
 
         action = output[1]
 
+        exe_path = self.get_exe_path_crop(output[0], output[1])
+
         return action, exe_path
+
+    def optimise(self, dynamics_model, dynamics_model_params, f, exe_path_BSOPA, x_test, key):
+        curr_obs_O = x_test[:self.obs_dim]
+        mean = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.action_dim))  # TODO this may not be zero if there is alreayd an action sequence, should check this
+        init_var_divisor = 4
+        var = jnp.ones_like(mean) * ((self.env.action_space().high - self.env.action_space().low) / init_var_divisor) ** 2
+
+        def _iter_iCEM2(iCEM2_runner_state, unused):  # TODO perhaps we can generalise this from above
+            mean_S1, var_S1, prev_samples, prev_returns, key = iCEM2_runner_state
+            key, _key = jrandom.split(key)  # TODO do I need this?
+            samples_BS1 = self._iCEM_generate_samples(_key,
+                                                      self.agent_config.BASE_NSAMPS,
+                                                      self.agent_config.PLANNING_HORIZON,
+                                                      self.agent_config.BETA,
+                                                      mean_S1,
+                                                      var_S1,
+                                                      self.env.action_space().low,
+                                                      self.env.action_space().high)
+
+            key, _key = jrandom.split(key)
+            batch_key = jrandom.split(_key, self.agent_config.BASE_NSAMPS)  # TODO do we need this double split?
+            acq = jax.vmap(self._evaluate_samples, in_axes=(None, None, None, None, 0, None, 0))(dynamics_model,
+                                                                                               dynamics_model_params,
+                                                                                               f,
+                                                                                               curr_obs_O,
+                                                                                               samples_BS1,
+                                                                                               exe_path_BSOPA,
+                                                                                               batch_key)
+            # TODO ideally we could vmap f above using params
+
+            # TODO reinstate below so that it works with jax
+            # not_finites = ~jnp.isfinite(acq)
+            # num_not_finite = jnp.sum(acq)
+            # # if num_not_finite > 0: # TODO could turn this into a cond
+            # logging.warning(f"{num_not_finite} acq function results were not finite.")
+            # acq = acq.at[not_finites[:, 0], :].set(-jnp.inf)  # TODO as they do it over iCEM samples and posterior samples, they add a mean to the posterior samples
+            returns_B = jnp.squeeze(acq, axis=-1)
+
+            # do some subset thing that works with initial dummy data, can#t do a subset but giving it a shot
+            samples_concat_BP1S1 = jnp.concatenate((samples_BS1, prev_samples), axis=0)
+            returns_concat_BP1 = jnp.concatenate((returns_B, prev_returns))
+
+            # rank returns and chooses the top N_ELITES as the new mean and var
+            elite_idx = jnp.argsort(returns_concat_BP1)[-self.agent_config.N_ELITES:]
+            elites_ISA = samples_concat_BP1S1[elite_idx, ...]
+            elite_returns_I = returns_concat_BP1[elite_idx]
+
+            mean_SA = jnp.mean(elites_ISA, axis=0)
+            var_SA = jnp.var(elites_ISA, axis=0)
+
+            return (mean_SA, var_SA, elites_ISA, elite_returns_I, key), (samples_concat_BP1S1, returns_concat_BP1)
+
+        key, _key = jrandom.split(key)
+        init_samples = jnp.zeros((self.agent_config.N_ELITES, self.agent_config.PLANNING_HORIZON, 1))
+        init_returns = jnp.ones((self.agent_config.N_ELITES,)) * -jnp.inf
+        _, (tree_samples, tree_returns) = jax.lax.scan(_iter_iCEM2, (mean, var, init_samples, init_returns, _key), None, self.agent_config.OPTIMISATION_ITERS)
+
+        flattened_samples = tree_samples.reshape(tree_samples.shape[0] * tree_samples.shape[1], -1)
+        flattened_returns = tree_returns.reshape(tree_returns.shape[0] * tree_returns.shape[1], -1)
+
+        best_idx = jnp.argmax(flattened_returns)
+        best_return = flattened_returns[best_idx]
+        best_sample = flattened_samples[best_idx, ...]
+
+        optimum = jnp.concatenate((curr_obs_O, jnp.expand_dims(best_sample[0], axis=0)))
+
+        return optimum, best_return
+
+    def _evaluate_samples(self, dynamics_model, dynamics_model_params, f, obs_O, samples_S1, exe_path_BSOPA, key):
+        # run a for loop planning basically
+        def _run_planning_horizon2(runner_state, actions_A):  # TODO again can we generalise this from above to save rewriting things
+            obs_O, key = runner_state
+            obsacts_OPA = jnp.concatenate((obs_O, actions_A), axis=-1)
+            key, _key = jrandom.split(key)
+            data_y_O = f(obsacts_OPA, _key)
+            nobs_O = self._obs_update_fn(obsacts_OPA, data_y_O)
+            return (nobs_O, key), obsacts_OPA
+
+        _, x_list_SOPA = jax.lax.scan(jax.jit(_run_planning_horizon2), (obs_O, key), samples_S1)
+
+        # this part is the acquisition function so should be generalised at some point rather than putting it here
+        # TODO add this as a function
+
+        # get posterior covariance for x_set
+        _, post_cov = dynamics_model.get_post_mu_cov(x_list_SOPA, dynamics_model_params, full_cov=True)
+
+        # get posterior covariance for all exe_paths, so this be a vmap probably
+        def _get_sample_cov(x_list_SOPA, exe_path_SOPA, params):
+            train_data = jnp.concatenate((params["train_data"], exe_path_SOPA["exe_path_x"]))
+            params["q_mu"] = jnp.zeros((train_data.shape[0], params["q_mu"].shape[-1]))  # TODO a dodgy workaround for now
+            return dynamics_model.get_post_mu_cov(x_list_SOPA, params, train_data=train_data, full_cov=True)
+
+        _, samp_cov = jax.vmap(_get_sample_cov, in_axes=(None, 0, None))(x_list_SOPA, exe_path_BSOPA, dynamics_model_params)
+
+        def fast_acq_exe_normal(post_covs, samp_covs_list):
+            signs, dets = jnp.linalg.slogdet(post_covs)
+            h_post = jnp.sum(dets, axis=-1)
+            signs, dets = jnp.linalg.slogdet(samp_covs_list)
+            h_samp = jnp.sum(dets, axis=-1)
+            avg_h_samp = jnp.mean(h_samp, axis=-1)
+            acq_exe = h_post - avg_h_samp
+            return acq_exe
+
+        acq = fast_acq_exe_normal(jnp.expand_dims(post_cov, axis=0), samp_cov)
+
+        return acq
 
 def test_MPC_algorithm():
     from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward
