@@ -25,7 +25,7 @@ class NormalizedEnv(environment.Environment):
 
     def action_space(self, params=None) -> spaces.Box:
         """Action space of the environment."""
-        return spaces.Box(-1, -1, shape=(self.unnorm_action_space.shape[0],))
+        return spaces.Box(-1, 1, shape=(self.unnorm_action_space.shape[0],))
 
     def observation_space(self, params=None) -> spaces.Box:
         """Observation space of the environment."""
@@ -251,7 +251,7 @@ def test():
     import sys
 
     sys.path.append(".")
-    from pendulum import PendulumEnv, pendulum_reward
+    from gymnax_pendulum import PendulumEnv, pendulum_reward
 
     sys.path.append("..")
     env = PendulumEnv()

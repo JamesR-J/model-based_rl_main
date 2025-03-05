@@ -25,8 +25,11 @@ class MOGP:
 
         num_latent_gps = self.obs_dim
 
-        ls = jnp.array([[80430.37, 4.40, 116218.45, 108521.27, 103427.47], [290.01, 318.22, 0.39, 1.57, 33.17],
-             [1063051.24, 1135236.37, 1239430.67, 25.09, 1176016.11], [331.70, 373.98, 0.32, 1.88, 39.83]], dtype=jnp.float64)
+        # TODO ls below is for cartpole
+        # ls = jnp.array([[80430.37, 4.40, 116218.45, 108521.27, 103427.47], [290.01, 318.22, 0.39, 1.57, 33.17],
+        #      [1063051.24, 1135236.37, 1239430.67, 25.09, 1176016.11], [331.70, 373.98, 0.32, 1.88, 39.83]], dtype=jnp.float64)
+        ls = jnp.array([[2.27, 7.73, 138.94], [0.84, 288.15, 11.05]],
+                       dtype=jnp.float64)
         alpha = jnp.array([0.26, 2.32, 11.59, 3.01], dtype=jnp.float64)  # TODO what is alpha?
         sigma = 0.01  # TODO right?
 
@@ -38,9 +41,9 @@ class MOGP:
 
         # opt_init, opt_update, get_params = optax.adam(1e-3)
 
-    def create_train_state(self, obs):
+    def create_train_state(self, init_data):
         params = self.gp.get_params()
-        params["train_data"] = jnp.expand_dims(jnp.concatenate((obs, jnp.zeros(self.action_dim))), axis=0)
+        params["train_data"] = init_data
         return params
 
     def get_post_mu_cov(self, XNew, params, train_data=None, full_cov=False):  # TODO if no data then return the prior mu and var

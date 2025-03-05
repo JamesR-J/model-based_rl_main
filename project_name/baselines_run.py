@@ -17,6 +17,7 @@ from gymnax.environments import environment
 from flax import struct
 from project_name import dynamics_models
 from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole  # TODO add some register thing here instead
+from project_name.envs.gymnax_pendulum import GymnaxPendulum  # TODO add some register thing here instead
 from functools import partial
 import time
 from project_name.viz import plotters, plot
@@ -28,8 +29,8 @@ import pandas as pd
 
 @struct.dataclass  # TODO dodgy for now and need to change the gymnax envs to be better for this
 class EnvState(environment.EnvState):
-    x: jnp.ndarray
-    x_dot: jnp.ndarray
+    # x: jnp.ndarray
+    # x_dot: jnp.ndarray
     theta: jnp.ndarray
     theta_dot: jnp.ndarray
     time: int
@@ -42,7 +43,8 @@ def run_train(config):
     # env = gym.make(config.ENV_NAME)
     # reward_function = envs.reward_functions[config.ENV_NAME]  # TODO add the custom reward function thing
 
-    env = GymnaxPilcoCartPole()
+    # env = GymnaxPilcoCartPole()
+    env = GymnaxPendulum()
     env_params = env.default_params
     obs_dim = len(env.observation_space(env_params).low)  # TODO is there a better way to write this?
     action_dim = env.action_space().shape[0]  # TODO same for this
@@ -66,8 +68,9 @@ def run_train(config):
     def _get_f_mpc(x_OPA, key, use_info_delta=False):  # TODO this should be generalised out of class at some point
         obs_O = x_OPA[:obs_dim]
         action_A = x_OPA[obs_dim:]
-        obs_O = env.unnormalize_obs(obs_O)  # TODO this dodgy fix still
-        env_state = EnvState(x=obs_O[0], x_dot=obs_O[1], theta=obs_O[2], theta_dot=obs_O[3], time=0)  # TODO specific for cartpole, need to generalise this
+        # obs_O = env.normalize_obs(obs_O)  # TODO this dodgy fix still
+        # env_state = EnvState(x=obs_O[0], x_dot=obs_O[1], theta=obs_O[2], theta_dot=obs_O[3], time=0)  # TODO specific for cartpole, need to generalise this
+        env_state = EnvState(theta=obs_O[0], theta_dot=obs_O[1], time=0)  # TODO specific for pendulum, need to generalise
         nobs_O, _, _, _, info = env.step(key, env_state, action_A, env_params)
         return nobs_O - obs_O
 
@@ -88,8 +91,6 @@ def run_train(config):
     # dynamics_model = dynamics_model.NeuralNetDynamicsModel(init_obs, env.action_space().sample(_key), hidden_dims=[50, 50],
     #                                         hidden_activations=jax.nn.swish, is_probabilistic=True)
     dynamics_model = dynamics_models.MOGP(env, env_params, config, None, key)
-    dynamics_model_train_state = dynamics_model.create_train_state(start_obs)  # TODO kinda dodge but adds the first obs to the GP dataset as otherwise have an empty params that would not work I think?
-    # TODO as mentioned above we add obs and some arbitrary action, but this may impact the model greatly so should fix this
     # TODO generalise this and add some more dynamics models
 
     # @partial(jax.jit, static_argnums=(0, 1))
@@ -125,7 +126,7 @@ def run_train(config):
     def execute_gt_mpc(init_obs, f, key):
         key, _key = jrandom.split(key)
         full_path, test_mpc_data, all_returns = actor.agent.run_algorithm_on_f(f, init_obs, key,
-                                                                  horizon=config.ENV_HORIZON,
+                                                                  horizon=env_params.horizon,
                                                                   actions_per_plan=actor.agent.agent_config.ACTIONS_PER_PLAN)
         path_lengths = len(full_path[0])  # TODO should we turn the output into a dict for x and y ?
         true_path = actor.agent.get_exe_path_crop(test_mpc_data[0], test_mpc_data[1])
@@ -169,6 +170,13 @@ def run_train(config):
         init_data_x = jnp.expand_dims(jnp.concatenate((start_obs_O, env.action_space().sample(_key)), axis=-1), axis=0)
         init_data_y = jnp.zeros((1, obs_dim))
 
+        dynamics_model_train_state = dynamics_model.create_train_state(init_data_x)
+        # TODO kinda dodge but adds the first obs to the GP dataset as otherwise have an empty params that would not work I think?
+        # TODO as mentioned above we add obs and some arbitrary action, but this may impact the model greatly so should fix this
+
+        def create_range_of_train_state():
+            return
+
         for i in range(config.NUM_ITERS):
             # log some info that we need basically
             logging.info("---" * 5 + f" Start iteration i={i} " + "---" * 5)
@@ -187,17 +195,17 @@ def run_train(config):
                 # TODO some if statement if our input data does not exist as not using generative approach, i.e. the first step
 
                 # TODO if statement if using an acquisition function, idk how to do this so that we don't require if statement
-                # idea here is to run a batch of MPC on different functions from the posterior
-                # so can we sample like a batch of params? so that we can just call the GP on these params in a VMAPPED setting
+                # idea here is to run a batch of MPC on different posterior functions, can we sample a batch of params? so that we can just call the GP on these params in a VMAPPED setting
 
                 # we need to make a posterior params list that is vmappable for future use
                 key, _key = jrandom.split(key)
                 batch_key = jrandom.split(_key, actor.agent.agent_config.ACQUISITION_SAMPLES)
-                action_B1A, exe_path_BSOPA = jax.vmap(actor.agent.execute_mpc, in_axes=(None, None, 0))(make_postmean_func(dynamics_model),
+                _, exe_path_BSOPA = jax.vmap(actor.agent.execute_mpc, in_axes=(None, None, 0, None, None))(make_postmean_func(dynamics_model),
                                                                                          curr_obs,
-                                                                                         batch_key)
-                exe_path = exe_path_BSOPA  # TODO not sure what to do with this but be good for plotting I guess
-                # TODO maybe some postmena function that takes specific keys dependant on the vamp batch
+                                                                                         batch_key,
+                                                                                         env_params.horizon,
+                                                                                         actor.agent.agent_config.ACTIONS_PER_PLAN)
+                # TODO maybe some postmean function that takes specific keys dependant on the vamp batch
 
                 # add in some test values
                 key, _key = jrandom.split(key)
@@ -219,11 +227,11 @@ def run_train(config):
                 # If using MPC then
                 # TODO some conditional for MPC here and for acquisition stuff above
                 # key, _key = jrandom.split(key)
-                # action, exe_path = actor.agent.execute_mpc(make_postmean_func(dynamics_model), curr_obs, key)
+                # action, exe_path = actor.agent.execute_mpc(make_postmean_func(dynamics_model), curr_obs, key, horizon=1, actions_per_pan=1)
                 # x_next = jnp.concatenate((jnp.expand_dims(curr_obs, axis=0), action), axis=-1)
                 # x_next = jnp.squeeze(x_next, axis=0)
 
-                return x_next, exe_path
+                return x_next, exe_path_BSOPA
 
             # get next point
             x_next_OPA, exe_path = get_next_point(start_obs_O, init_data_x, init_data_y, key)
@@ -249,7 +257,8 @@ def run_train(config):
                     def _env_step(env_runner_state, unused):
                         obs_O, env_state, key = env_runner_state
                         key, _key = jrandom.split(key)
-                        action_1A, _ = actor.agent.execute_mpc(make_postmean_func(dynamics_model), obs_O, _key)
+                        action_1A, _ = actor.agent.execute_mpc(make_postmean_func(dynamics_model), obs_O, _key,
+                                                               horizon=1, actions_per_plan=1)
                         action_A = jnp.squeeze(action_1A, axis=0)
                         key, _key = jrandom.split(key)
                         nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
@@ -257,31 +266,31 @@ def run_train(config):
                         return (nobs_O, new_env_state, key), (nobs_O, reward, action_A)
 
                     key, _key = jrandom.split(key)
-                    _, (nobs, real_rewards, real_actions) = jax.lax.scan(_env_step, (start_obs, start_env_state, _key), None, config.ENV_HORIZON)
-                    real_obs = jnp.concatenate((jnp.expand_dims(start_obs, axis=0), nobs))
-                    real_returns = actor.agent._compute_returns(real_rewards)  # TODO sort this out at some point
-                    real_path_x = jnp.concatenate((real_obs[:-1], real_actions), axis=-1)
-                    real_path_y = real_obs[1:] - real_obs[:-1]
+                    _, (nobs_SO, real_rewards_S, real_actions_SA) = jax.lax.scan(_env_step, (start_obs, start_env_state, _key), None, env_params.horizon)
+                    real_obs_SP1O = jnp.concatenate((jnp.expand_dims(start_obs, axis=0), nobs_SO))
+                    real_returns_1 = actor.agent._compute_returns(jnp.expand_dims(real_rewards_S, axis=0))  # TODO sort this out at some point
+                    real_path_x_SOPA = jnp.concatenate((real_obs_SP1O[:-1], real_actions_SA), axis=-1)
+                    real_path_y_SO = real_obs_SP1O[1:] - real_obs_SP1O[:-1]
                     key, _key = jrandom.split(key)
-                    real_path_y_hat = make_postmean_func_2(dynamics_model)(real_path_x, _key)
-                    mse = 0.5 * jnp.mean(jnp.sum(jnp.square(real_path_y - real_path_y_hat), axis=1))
+                    real_path_y_hat_SO = make_postmean_func_2(dynamics_model)(real_path_x_SOPA, _key)
+                    mse = 0.5 * jnp.mean(jnp.sum(jnp.square(real_path_y_SO - real_path_y_hat_SO), axis=1))
 
-                    return (RealPath(x=real_path_x, y=real_path_y, y_hat=real_path_y_hat),
-                            real_returns, jnp.mean(real_returns), jnp.std(real_returns), jnp.mean(mse))
+                    return (RealPath(x=real_path_x_SOPA, y=real_path_y_SO, y_hat=real_path_y_hat_SO),
+                            jnp.squeeze(real_returns_1), jnp.mean(real_returns_1), jnp.std(real_returns_1), jnp.mean(mse))
 
                 batch_key = jrandom.split(key, config.NUM_EVAL_TRIALS)
                 key, _key = jrandom.split(key)
                 start_obs, start_env_state = get_start_obs(key)
                 real_paths_mpc, real_returns, mean_returns, std_returns, mse = jax.vmap(_eval_trial, in_axes=(None, None, 0))(start_obs, start_env_state, batch_key)
-                logging.info(f"Eval Returns - {real_returns}; Mean - {jnp.mean(mean_returns):.2f}; "
-                             f"Std - {jnp.std(std_returns):.2f}")
-                logging.info(f"Model MSE - {jnp.mean(mse):.2f}")
+                logging.info(f"Eval Returns = {real_returns}; Mean = {jnp.mean(mean_returns):.2f}; "
+                             f"Std = {jnp.std(std_returns):.2f}")
+                logging.info(f"Model MSE = {jnp.mean(mse):.2f}")
 
                 # TODO add testing on the random test_data that we created initially
 
                 make_plots(plot_fn,
                            domain,
-                           PlotTuple(x=true_paths["exe_path_x"][-1], y=true_paths["exe_path_y"][-1]),  # TODO what is wrong with true path
+                           PlotTuple(x=true_paths["exe_path_x"][-1], y=true_paths["exe_path_y"][-1]),
                            PlotTuple(x=init_data_x, y=init_data_y),
                            env,
                            env_params,

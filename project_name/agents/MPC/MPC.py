@@ -161,14 +161,23 @@ class MPCAgent(AgentBase):
         return samples.reshape(-1, 1)
 
     @partial(jax.jit, static_argnums=(0,))
-    def _obs_update_fn(self, x, y):  # TODO depends on the env, need to instate this somehow, curr no teleport
-        start_obs = x[..., :self.obs_dim]
-        delta_obs = y[..., -self.obs_dim:]
+    def _obs_update_fn(self, x, y):  # TODO depends on the env, need to instate this somehow
+        start_obs = x[:self.obs_dim]
+        delta_obs = y[-self.obs_dim:]
         output = start_obs + delta_obs
-        return output  # TODO add teleport stuff and move this into utils probs
 
-    @partial(jax.jit, static_argnums=(0, 2))
-    def _action_space_multi_sample(self, key, actions_per_plan):
+        # TODO the following is teleport stuff for cartpole
+        # shifted_output_og = output - self.env.observation_space(self.env_params).low
+        # mask = jnp.array((0, 0, 1, 0))  # TODO generalise this
+        # obs_range = self.env.observation_space(self.env_params).high - self.env.observation_space(self.env_params).low
+        # shifted_output = jnp.remainder(shifted_output_og, obs_range)
+        # modded_output = shifted_output_og + (mask * shifted_output) - (mask * shifted_output_og)
+        # output = modded_output + self.env.observation_space(self.env_params).low
+
+        return output
+
+    @partial(jax.jit, static_argnums=(0, 1))
+    def _action_space_multi_sample(self, actions_per_plan, key):
         keys = jrandom.split(key, actions_per_plan * self.n_keep)
         keys = keys.reshape((actions_per_plan, self.n_keep, -1))
         sample_fn = lambda k: self.env.action_space().sample(rng=k)
@@ -177,152 +186,151 @@ class MPCAgent(AgentBase):
         return actions
 
     @partial(jax.jit, static_argnums=(0,))
-    def _compute_returns(self, rewards):
+    def _compute_returns(self, rewards):  # MUST BE SHAPE batch, horizon as polyval uses shape horizon, batch
         # TODO compare against old np.polynomial.polynomial.polyval(discount_factor, rewards)
-        return jnp.polyval(rewards, self.agent_config.DISCOUNT_FACTOR)  # TODO check discount factor does not change
+        return jnp.polyval(rewards.T, self.agent_config.DISCOUNT_FACTOR)  # TODO check discount factor does not change
 
     @partial(jax.jit, static_argnums=(0, 1, 4, 5))
-    def run_algorithm_on_f(self, f, init_obs_O, key, horizon, actions_per_plan):
-        # def _get_f_mpc(x_OPA, use_info_delta=False):  # TODO this should be generalised out of class at some point
-        #     obs_O = x_OPA[:self.obs_dim]
-        #     action_A = x_OPA[self.obs_dim:]
-        #     env_state = EnvState(x=obs_O[0], x_dot=obs_O[1], theta=obs_O[2], theta_dot=obs_O[3],
-        #                          time=0)  # TODO specific for cartpole, need to generalise this
-        #     nobs_O, _, _, _, info = self.env.step(key, env_state, action_A, self.env_params)
-        #     # if use_info_delta:  # TODO do we need the info delta?
-        #     #     return info["delta_obs"]
-        #     # else:
-        #     return nobs_O - obs_O
-
+    def run_algorithm_on_f(self, f, start_obs_O, key, horizon, actions_per_plan):
+        # TODO assumed const sample n for now
         def _outer_loop(outer_loop_state, unused):
-            init_obs_O, init_mean, init_var, init_shift_actions_SB1, key = outer_loop_state
+            init_obs_O, init_mean_S1, init_var_S1, init_shift_actions_BS1, key = outer_loop_state
 
-            init_traj = MPCTransition(obs=jnp.zeros((self.agent_config.PLANNING_HORIZON, self.n_keep, self.obs_dim)),
-                                      action=jnp.zeros((self.agent_config.PLANNING_HORIZON, self.n_keep, self.action_dim)),
-                                      reward=jnp.ones((self.agent_config.PLANNING_HORIZON, self.n_keep, 1)) * -100)   # TODO this may need to be something other than zeros in case of negative rewards
-            init_obs_BO = jnp.tile(init_obs_O,(self.agent_config.BASE_NSAMPS + self.n_keep, 1))
-            # TODO assumed const sample n for now
+            init_traj_BSX = MPCTransition(obs=jnp.zeros((self.n_keep, self.agent_config.PLANNING_HORIZON, self.obs_dim)),
+                                      action=jnp.zeros((self.n_keep, self.agent_config.PLANNING_HORIZON, self.action_dim)),
+                                      reward=jnp.ones((self.n_keep, self.agent_config.PLANNING_HORIZON, 1)) * -jnp.inf)
+            # TODO the above reward may need to be something better as it can cause issues
 
-            def _iter_iCEM(iCEM_iter_state, num_samples):
-                mean, var, init_saved_traj, key = iCEM_iter_state
+            def _iter_iCEM(iCEM_iter_state, unused):
+                mean_S1, var_S1, init_saved_traj_BSX, key = iCEM_iter_state
+
                 # loops over the below and then takes trajectories to resample ICEM if not initial
-                key, _key = jrandom.split(key)  # TODO do I need this?
+                key, _key = jrandom.split(key)
                 init_traj_samples_BS1 = self._iCEM_generate_samples(_key,
                                                            self.agent_config.BASE_NSAMPS,  # TODO have removed adaptive num_samples
                                                            self.agent_config.PLANNING_HORIZON,
                                                            self.agent_config.BETA,
-                                                           mean,
-                                                           var,
+                                                           mean_S1,
+                                                           var_S1,
                                                            self.env.action_space().low,
                                                            self.env.action_space().high)
 
-                def _run_planning_horizon(runner_state, actions_BA):
-                    obs_BO, key = runner_state
-                    key, _key = jrandom.split(key)
-                    obsacts_BOPA = jnp.concatenate((obs_BO, actions_BA), axis=-1)
-                    batch_key = jrandom.split(_key, obs_BO.shape[0])
-                    data_y_BO = jax.vmap(f)(obsacts_BOPA, batch_key)  # TODO check what this vmap is for, can we vmap outside the whole loop?
-                    nobs_BO = self._obs_update_fn(obsacts_BOPA, data_y_BO)
-                    reward_S1 = self.env.reward_function(obsacts_BOPA, nobs_BO, self.env_params)
-                    return (nobs_BO, key), MPCTransitionXY(obs=nobs_BO, action=actions_BA, reward=jnp.expand_dims(reward_S1, axis=-1),
-                                                         x=obsacts_BOPA, y=data_y_BO)
-                    # TODO maybe remove the extra reward dim if unneccesary
+                def _run_single_planning_horizon(init_samples_S1, key):
+                    def _run_planning_horizon(runner_state, actions_A):
+                        obs_O, key = runner_state
+                        obsacts_OPA = jnp.concatenate((obs_O, actions_A))
+                        key, _key = jrandom.split(key)
+                        data_y_O = f(obsacts_OPA, _key)
+                        nobs_O = self._obs_update_fn(obsacts_OPA, data_y_O)
+                        reward = self.env.reward_function(obsacts_OPA, nobs_O, self.env_params)
+                        return (nobs_O, key), MPCTransitionXY(obs=nobs_O,
+                                                              action=actions_A,
+                                                              reward=jnp.expand_dims(reward, axis=-1),
+                                                              x=obsacts_OPA, y=data_y_O)
+                    return jax.lax.scan(_run_planning_horizon, (init_obs_O, key), init_samples_S1, self.agent_config.PLANNING_HORIZON)
 
-                init_traj_samples_SB1 = jnp.swapaxes(init_traj_samples_BS1, 0, 1)
-                init_traj_samples_SB1 = jnp.concatenate((init_traj_samples_SB1, init_shift_actions_SB1), axis=1)
-                (end_obs, key), planning_traj = jax.lax.scan(jax.jit(_run_planning_horizon), (init_obs_BO, key),
-                                                             init_traj_samples_SB1, self.agent_config.PLANNING_HORIZON)
+                init_traj_samples_BS1 = jnp.concatenate((init_traj_samples_BS1, init_shift_actions_BS1), axis=0)
+                batch_key = jrandom.split(key, self.agent_config.BASE_NSAMPS + self.n_keep)
+                _, planning_traj_BSX = jax.vmap(_run_single_planning_horizon, in_axes=(0, 0))(init_traj_samples_BS1,
+                                                                                              batch_key)
 
-                # need to concat this trajectory with previous ones in the loop ie best_traj
-                planning_traj_minus_xy = MPCTransition(obs=planning_traj.obs, action=planning_traj.action, reward=planning_traj.reward)
-                traj_combined = jax.tree_util.tree_map(lambda x, y: jnp.concatenate((x, y), axis=1),
-                                                       planning_traj_minus_xy,
-                                                       init_saved_traj)
+                # need to concat this trajectory with previous ones in the loop ie best_traj so far
+                planning_traj_minus_xy_BSX = MPCTransition(obs=planning_traj_BSX.obs,
+                                                           action=planning_traj_BSX.action,
+                                                           reward=planning_traj_BSX.reward)
+                traj_combined_BSX = jax.tree_util.tree_map(lambda x, y: jnp.concatenate((x, y), axis=0),
+                                                       planning_traj_minus_xy_BSX,
+                                                       init_saved_traj_BSX)
 
                 # compute return on the entire training list
-                # TODO compare against old np.polynomial.polynomial.polyval(discount_factor, rewards)
-                all_returns_BP1 = self._compute_returns(jnp.squeeze(traj_combined.reward, axis=-1))
+                all_returns_B = self._compute_returns(jnp.squeeze(traj_combined_BSX.reward, axis=-1))
 
                 # rank returns and chooses the top N_ELITES as the new mean and var
-                elite_idx = jnp.argsort(all_returns_BP1)[-self.agent_config.N_ELITES:]
-                elites_SIA = traj_combined.action[:, elite_idx, ...]
+                elite_idx = jnp.argsort(all_returns_B)[-self.agent_config.N_ELITES:]
+                elites_ISA = traj_combined_BSX.action[elite_idx]
 
-                mean_SA = jnp.mean(elites_SIA, axis=1)
-                var_SA = jnp.var(elites_SIA, axis=1)
+                mean_SA = jnp.mean(elites_ISA, axis=0)
+                var_SA = jnp.var(elites_ISA, axis=0)
 
+                # save the top n runs from this cycle
                 save_idx = elite_idx[-self.n_keep:]
-                end_traj_saved = jax.tree_util.tree_map(lambda x: x[:, save_idx, ...], traj_combined)
+                end_traj_saved_BSX = jax.tree_util.tree_map(lambda x: x[save_idx, ...], traj_combined_BSX)
                 # TODO surely saved contains the best option as well right?
 
-                mpc_transition = MPCTransition(obs=end_traj_saved.obs,
-                                               action=end_traj_saved.action,
-                                               reward=end_traj_saved.reward)
+                mpc_transition_BSX = MPCTransition(obs=end_traj_saved_BSX.obs,
+                                               action=end_traj_saved_BSX.action,
+                                               reward=end_traj_saved_BSX.reward)
 
-                mpc_transition_xy = MPCTransitionXY(obs=end_traj_saved.obs,
-                                                 action=end_traj_saved.action,
-                                                 reward=end_traj_saved.reward,
-                                                 x=planning_traj.x,
-                                                 y=planning_traj.y)
+                mpc_transition_xy_BSX = MPCTransitionXY(obs=end_traj_saved_BSX.obs,
+                                                 action=end_traj_saved_BSX.action,
+                                                 reward=end_traj_saved_BSX.reward,
+                                                 x=planning_traj_BSX.x,
+                                                 y=planning_traj_BSX.y)
                 # TODO kinda dodge but it works, can we streamline?
 
-                return (mean_SA, var_SA, mpc_transition, key), mpc_transition_xy
+                return (mean_SA, var_SA, mpc_transition_BSX, key), mpc_transition_xy_BSX
 
-            (_, _, _, key), iCEM_traj = jax.lax.scan(_iter_iCEM,(init_mean, init_var, init_traj, key),
+            (_, _, _, key), iCEM_traj_RBSX = jax.lax.scan(_iter_iCEM,(init_mean_S1, init_var_S1, init_traj_BSX, key),
                                                      None,
                                                      self.agent_config.iCEM_ITERS)
 
-            iCEM_traj_minus_xy = MPCTransition(obs=iCEM_traj.obs, action=iCEM_traj.action, reward=iCEM_traj.reward)
-            iCEM_traj_flipped = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), iCEM_traj_minus_xy)
-            iCEM_traj_flipped = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (x.shape[0], x.shape[1] * x.shape[2], x.shape[3])), iCEM_traj_flipped)
+            iCEM_traj_minus_xy_RBSX = MPCTransition(obs=iCEM_traj_RBSX.obs,
+                                               action=iCEM_traj_RBSX.action,
+                                               reward=iCEM_traj_RBSX.reward)
+            iCEM_traj_minus_xy_BSX = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])), iCEM_traj_minus_xy_RBSX)
 
-            all_returns_R1 = self._compute_returns(iCEM_traj_flipped.reward)
-            best_sample_idx = jnp.argmax(all_returns_R1)
-            best_iCEM_traj_flipped = jax.tree_util.tree_map(lambda x: x[:, best_sample_idx, ...], iCEM_traj_flipped)
+            # find the best sample from iCEM
+            all_returns_B = self._compute_returns(jnp.squeeze(iCEM_traj_minus_xy_BSX.reward, axis=-1))
+            best_sample_idx = jnp.argmax(all_returns_B)
+            best_iCEM_traj_SX = jax.tree_util.tree_map(lambda x: x[best_sample_idx], iCEM_traj_minus_xy_BSX)
 
-            planned_iCEM_traj_flipped = jax.tree_util.tree_map(lambda x: x[:actions_per_plan], best_iCEM_traj_flipped)
+            # take the number of actions of that plan and add to the existing plan
+            planned_iCEM_traj_LX = jax.tree_util.tree_map(lambda x: x[:actions_per_plan], best_iCEM_traj_SX)
 
-            curr_obs_O = best_iCEM_traj_flipped.obs[actions_per_plan - 1, :]
+            # shift obs
+            curr_obs_O = best_iCEM_traj_SX.obs[actions_per_plan-1]
 
-            # shift_samples
-            keep_indices = jnp.argsort(jnp.squeeze(all_returns_R1, axis=-1))[-self.n_keep:]
-            short_shifted_actions_S1A = iCEM_traj_flipped.action[actions_per_plan:, keep_indices, :]
+            # shift actions
+            keep_indices = jnp.argsort(all_returns_B)[-self.n_keep:]
+            short_shifted_actions_BSMLA = iCEM_traj_minus_xy_BSX.action[keep_indices, actions_per_plan:, :]
 
+            # sample new actions and concat onto the "taken" actions
             key, _key = jrandom.split(key)
-            new_actions_batch = self._action_space_multi_sample(_key, actions_per_plan)
+            new_actions_batch_LBA = self._action_space_multi_sample(actions_per_plan, _key)
+            shifted_actions_BSA = jnp.concatenate((short_shifted_actions_BSMLA,
+                                                   jnp.swapaxes(new_actions_batch_LBA, 0, 1)), axis=1)
 
-            shifted_actions_S1A = jnp.concatenate((short_shifted_actions_S1A, new_actions_batch))
-
-            end_mean = jnp.concatenate((init_mean[actions_per_plan:],
+            # remake the mean for iCEM
+            end_mean_S1 = jnp.concatenate((init_mean_S1[actions_per_plan:],
                                         jnp.zeros((actions_per_plan, self.action_dim))))
-            end_var = (jnp.ones_like(end_mean) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
+            end_var_S1 = (jnp.ones_like(end_mean_S1) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
 
-            return (curr_obs_O, end_mean, end_var, shifted_actions_S1A, key), MPCTransitionXYR(obs=planned_iCEM_traj_flipped.obs,
-                                                                                            action=planned_iCEM_traj_flipped.action,
-                                                                                            reward=planned_iCEM_traj_flipped.reward,
-                                                                                            x=iCEM_traj.x,
-                                                                                            y=iCEM_traj.y,
-                                                                                            returns=all_returns_R1)
+            return (curr_obs_O, end_mean_S1, end_var_S1, shifted_actions_BSA, key), MPCTransitionXYR(obs=planned_iCEM_traj_LX.obs,
+                                                                                            action=planned_iCEM_traj_LX.action,
+                                                                                            reward=planned_iCEM_traj_LX.reward,
+                                                                                            x=iCEM_traj_RBSX.x,
+                                                                                            y=iCEM_traj_RBSX.y,
+                                                                                            returns=all_returns_B)
 
         outer_loop_steps = horizon // actions_per_plan  # TODO ensure this is an equal division
 
-        init_mean = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.env.action_space().shape[0]))
-        init_var = (jnp.ones_like(init_mean) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
-        shift_actions = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.n_keep, self.action_dim))  # TODO is this okay to add zeros?
-        # num_samples = self._generate_num_samples_array()
+        init_mean_S1 = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.env.action_space().shape[0]))
+        init_var_S1 = (jnp.ones_like(init_mean_S1) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
+        shift_actions_BSA = jnp.zeros((self.n_keep, self.agent_config.PLANNING_HORIZON, self.action_dim))  # TODO is this okay to add zeros?
 
-        (_, _, _, _, key), overall_traj = jax.lax.scan(_outer_loop, (init_obs_O, init_mean, init_var, shift_actions, key), None, outer_loop_steps)
+        (_, _, _, _, key), overall_traj = jax.lax.scan(_outer_loop, (start_obs_O, init_mean_S1, init_var_S1, shift_actions_BSA, key), None, outer_loop_steps)
 
-        overall_traj_minus_xyr = MPCTransition(obs=overall_traj.obs, action=overall_traj.action, reward=overall_traj.reward)
-        flattened_overall_traj = jax.tree_util.tree_map(lambda x: x.reshape(x.shape[0] * x.shape[1], -1), overall_traj_minus_xyr)
-        # TODO check this flattens correctly
+        overall_traj_minus_xyr_BLX = MPCTransition(obs=overall_traj.obs, action=overall_traj.action, reward=overall_traj.reward)
+        flattened_overall_traj_SX = jax.tree_util.tree_map(lambda x: x.reshape(x.shape[0] * x.shape[1], -1), overall_traj_minus_xyr_BLX)
+        # TODO check this flattens correctly aka the batch of L steps merges into a contiguous S
 
         flatenned_path_x = overall_traj.x.reshape((-1, overall_traj.x.shape[-1]))
         flatenned_path_y = overall_traj.y.reshape((-1, overall_traj.y.shape[-1]))
-        # TODO check this actually flattens
+        # TODO check this actually flattens, do we even want to fllaten this, unsure what shape even is
 
-        joiner = jnp.concatenate((jnp.expand_dims(init_obs_O, axis=0), flattened_overall_traj.obs))
+        joiner_SP1O = jnp.concatenate((jnp.expand_dims(start_obs_O, axis=0), flattened_overall_traj_SX.obs))
         return ((flatenned_path_x, flatenned_path_y),
-                (joiner, flattened_overall_traj.action, flattened_overall_traj.reward),
+                (joiner_SP1O, flattened_overall_traj_SX.action, flattened_overall_traj_SX.reward),
                 overall_traj.returns)
 
     def get_exe_path_crop(self, planned_states, planned_actions):
@@ -335,11 +343,11 @@ class MPCAgent(AgentBase):
 
         return {"exe_path_x": x, "exe_path_y": y}
 
-    def execute_mpc(self, f, obs, key):
+    def execute_mpc(self, f, obs, key, horizon, actions_per_plan):
 
         # TODO add some if statement and stuff if it will be open-loop
 
-        full_path, output, _ = self.run_algorithm_on_f(f, obs, key, horizon=1, actions_per_plan=1)
+        full_path, output, _ = self.run_algorithm_on_f(f, obs, key, horizon, actions_per_plan)
 
         action = output[1]
 

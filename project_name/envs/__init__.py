@@ -1,20 +1,19 @@
 import logging
 from gymnasium.envs.registration import register
-from project_name.envs.pendulum import PendulumEnv, pendulum_reward
 from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward
 from project_name.envs.wet_chicken import WetChicken, wet_chicken_reward
 
 
-register(
-    id="bacpendulum-v0",
-    entry_point=PendulumEnv,
-)
+# register(
+#     id="bacpendulum-v0",
+#     entry_point=PendulumEnv,
+# )
 register(
     id="pilcocartpole-v0",
     entry_point=CartPoleSwingUpEnv,
 )
 reward_functions = {
-    "bacpendulum-v0": pendulum_reward,
+    # "bacpendulum-v0": pendulum_reward,
     "pilcocartpole-v0": pilco_cartpole_reward,
 }
 

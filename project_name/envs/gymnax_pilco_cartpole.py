@@ -35,20 +35,15 @@ class EnvParams(environment.EnvParams):
     length: float = 0.6  # 0.5
     mass_pole_length: float = 0.3  # (masspole * length)
     force_mag: float = 10.0
-    tau: float = 0.1  # seconds between state updates
+    dt: float = 0.1  # seconds between state updates
     b: float = 0.1  # friction coefficient
     theta_threshold_radians: float = 12 * 2 * jnp.pi / 360
     x_threshold: float = 2.4
     max_steps_in_episode: int = 500  # v0 had only 200 steps!
+    horizon: int = 25
 
 
 class GymnaxPilcoCartPole(environment.Environment[EnvState, EnvParams]):
-    """JAX Compatible version of CartPole-v1 OpenAI gym environment.
-
-
-    Source: github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
-    """
-
     def __init__(self):
         super().__init__()
         self.obs_shape = (4,)
@@ -58,63 +53,61 @@ class GymnaxPilcoCartPole(environment.Environment[EnvState, EnvParams]):
         # Default environment parameters for CartPole-v1
         return EnvParams()
 
-    def step_env(
-        self,
-        key: chex.PRNGKey,
-        state: EnvState,
-        action: Union[int, float, chex.Array],
-        params: EnvParams,
-    ) -> Tuple[chex.Array, EnvState, jnp.ndarray, jnp.ndarray, Dict[Any, Any]]:
-        """Performs step transitions in the environment."""
-        action = jnp.clip(action, -1, 1)[0] * params.force_mag
+    def step_env(self,
+                 key: chex.PRNGKey,
+                 state: EnvState,
+                 action: Union[int, float, chex.Array],
+                 params: EnvParams) -> Tuple[chex.Array, EnvState, jnp.ndarray, jnp.ndarray, Dict[Any, Any]]:
+                """Performs step transitions in the environment."""
+                action = jnp.clip(action, -1, 1)[0] * params.force_mag
 
-        # prev_terminal = self.is_terminal(state, params)
+                # prev_terminal = self.is_terminal(state, params)
 
-        costheta = jnp.cos(state.theta)
-        sintheta = jnp.sin(state.theta)
+                costheta = jnp.cos(state.theta)
+                sintheta = jnp.sin(state.theta)
 
-        xdot_update = (-2 * params.mass_pole_length * (state.theta_dot ** 2) * sintheta + 3 * params.masspole * params.gravity
-                        * sintheta * costheta + 4 * action - 4 * params.b * state.x_dot) / (4 * params.total_mass - 3
-                                                                                            * params.masspole * costheta ** 2)
+                xdot_update = (-2 * params.mass_pole_length * (state.theta_dot ** 2) * sintheta + 3 * params.masspole * params.gravity
+                                * sintheta * costheta + 4 * action - 4 * params.b * state.x_dot) / (4 * params.total_mass - 3
+                                                                                                    * params.masspole * costheta ** 2)
 
-        thetadot_update = (-3 * params.mass_pole_length * (state.theta_dot ** 2) * sintheta * costheta + 6 * params.total_mass
-                           * params.gravity * sintheta + 6 * (action - params.b * state.x_dot) * costheta) / (4 * params.length * params.total_mass - 3 * params.mass_pole_length * costheta ** 2)
+                thetadot_update = (-3 * params.mass_pole_length * (state.theta_dot ** 2) * sintheta * costheta + 6 * params.total_mass
+                                   * params.gravity * sintheta + 6 * (action - params.b * state.x_dot) * costheta) / (4 * params.length * params.total_mass - 3 * params.mass_pole_length * costheta ** 2)
 
-        x = state.x + state.x_dot * params.tau
-        unnorm_theta = state.theta + state.theta_dot * params.tau
-        theta = self._angle_normalize(unnorm_theta)
-        x_dot = state.x_dot + xdot_update * params.tau
-        theta_dot = state.theta_dot + thetadot_update * params.tau
+                x = state.x + state.x_dot * params.dt
+                unnorm_theta = state.theta + state.theta_dot * params.dt
+                theta = self._angle_normalise(unnorm_theta)
+                x_dot = state.x_dot + xdot_update * params.dt
+                theta_dot = state.theta_dot + thetadot_update * params.dt
 
-        # compute costs - saturation cost
-        goal = jnp.array([0.0, params.length])
-        pole_x = params.length * jnp.sin(theta)
-        pole_y = params.length * jnp.cos(theta)
-        position = jnp.array([state.x + pole_x, pole_y])
-        squared_distance = jnp.sum((position - goal) ** 2)
-        squared_sigma = 0.25 ** 2
-        costs = 1 - jnp.exp(-0.5 * squared_distance / squared_sigma)
+                # compute costs - saturation cost
+                goal = jnp.array([0.0, params.length])
+                pole_x = params.length * jnp.sin(theta)
+                pole_y = params.length * jnp.cos(theta)
+                position = jnp.array([state.x + pole_x, pole_y])
+                squared_distance = jnp.sum((position - goal) ** 2)
+                squared_sigma = 0.25 ** 2
+                costs = 1 - jnp.exp(-0.5 * squared_distance / squared_sigma)
 
-        # Update state dict and evaluate termination conditions
-        state = EnvState(x=x,
-                         x_dot=x_dot,
-                         theta=theta,
-                         theta_dot=theta_dot,
-                         time=state.time + 1)
+                # Update state dict and evaluate termination conditions
+                state = EnvState(x=x,
+                                 x_dot=x_dot,
+                                 theta=theta,
+                                 theta_dot=theta_dot,
+                                 time=state.time + 1)
 
-        # done = self.is_terminal(state, params)
-        done = False  # TODO apparently always false
+                # done = self.is_terminal(state, params)
+                done = False  # TODO apparently always false
 
-        delta_s = None  # TODO may add this in if needed
+                delta_s = None  # TODO may add this in if needed
 
-        return (lax.stop_gradient(self.get_obs(state)),
-                lax.stop_gradient(state),
-                jnp.array(-costs),
-                done,
-                {"discount": self.discount(state, params),
-                 "delta_obs": delta_s})
+                return (lax.stop_gradient(self.get_obs(state)),
+                        lax.stop_gradient(state),
+                        jnp.array(-costs),
+                        done,
+                        {"discount": self.discount(state, params),
+                         "delta_obs": delta_s})
 
-    def _angle_normalize(self, x):
+    def _angle_normalise(self, x):
         return ((x + jnp.pi) % (2 * jnp.pi)) - jnp.pi
 
     def _get_pole_pos(self, x, params: EnvParams):
@@ -140,7 +133,7 @@ class GymnaxPilcoCartPole(environment.Environment[EnvState, EnvParams]):
         init_state = jax.random.normal(key, shape=(4,)) * scale + loc
         state = EnvState(x=init_state[0],
                          x_dot=init_state[1],
-                         theta=self._angle_normalize(init_state[2]),
+                         theta=self._angle_normalise(init_state[2]),
                          theta_dot=init_state[3],
                          time=0)
         return self.get_obs(state), state

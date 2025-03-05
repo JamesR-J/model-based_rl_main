@@ -5,9 +5,10 @@ def get_config():
     config = config_dict.ConfigDict()
     config.SEED = 42
 
-    config.ENV_NAME = "pilcocartpole-v0"
-    config.NORMALISE_ENV = True
-    config.ENV_HORIZON = 25
+    # config.ENV_NAME = "pilcocartpole-v0"
+    config.ENV_NAME = "bacpendulum-v0"
+    config.NORMALISE_ENV = False  # TODO sort this out its so bad
+    # config.ENV_HORIZON = 200
     config.GENERATIVE_ENV = True  # False
     config.NO_ENV_RUN = False
 
@@ -44,7 +45,7 @@ def get_config():
 BELNOAZ LoL
 B - Batch size, probably when using replay buffer
 E - Number of Episodes
-L - Episode Length/NUM_INNER_STEPS
+L - Episode Length/NUM_INNER_STEPS/Actions Per Plan
 S - Seq length if using trajectory buffer/Planning Horizon
 N - Number of Envs
 O - Observation Dim
