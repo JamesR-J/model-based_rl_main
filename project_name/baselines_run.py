@@ -7,7 +7,7 @@ from typing import NamedTuple
 import chex
 from project_name.agents import Agent
 from project_name.envs.wrappers import NormalizedEnv, make_normalized_reward_function
-from project_name.utils import Transition, EvalTransition, PlotTuple, RealPath, make_plots
+from project_name.utils import Transition, EvalTransition, PlotTuple, RealPath, make_plots, get_initial_data
 import sys
 import gymnasium as gym
 from project_name import envs
@@ -90,37 +90,14 @@ def run_train(config):
     key, _key = jrandom.split(key)
     # dynamics_model = dynamics_model.NeuralNetDynamicsModel(init_obs, env.action_space().sample(_key), hidden_dims=[50, 50],
     #                                         hidden_activations=jax.nn.swish, is_probabilistic=True)
-    dynamics_model = dynamics_models.MOGP(env, env_params, config, None, key)
+    dynamics_model = dynamics_models.MOGP(env, env_params, config, None, _key)
     # TODO generalise this and add some more dynamics models
 
-    # @partial(jax.jit, static_argnums=(0, 1))
-    def get_initial_data(f, plot_fn, key):
-        def unif_random_sample_domain(low, high, key, n=1):
-            unscaled_random_sample = jrandom.uniform(key, shape=(n, low.shape[0]))
-            scaled_random_sample = low + (high - low) * unscaled_random_sample
-            return scaled_random_sample
-
-        data_x_LOPA = unif_random_sample_domain(low, high, key, n=config.NUM_INIT_DATA)
-        if config.GENERATIVE_ENV:
-            batch_key = jrandom.split(key, config.NUM_INIT_DATA)
-            data_y_LO = jax.vmap(f)(data_x_LOPA, batch_key)
-        else:
-            raise NotImplementedError("If not generative env then we have to output nothing, unsure how to do in Jax")
-
-        # Plot initial data
-        ax_obs_init, fig_obs_init = plot_fn(path=None, domain=domain)
-        if ax_obs_init is not None and config.SAVE_FIGURES:
-            plot(ax_obs_init, data_x_LOPA, "o", color="k", ms=1)
-            fig_obs_init.suptitle("Initial Observations")
-            neatplot.save_figure("figures/obs_init", "png", fig=fig_obs_init)
-
-        return data_x_LOPA, data_y_LO
-
     # get some initial data for something, unsure what as of now? also a test set
-    key, _key = jrandom.split(key)
-    init_data_x, init_data_y = get_initial_data(_get_f_mpc, plot_fn, _key)
     # key, _key = jrandom.split(key)
-    # test_data_x, test_data_y = get_initial_data(jax.vmap(_get_f_mpc), plot_fn, _key
+    # init_data_x, init_data_y = get_initial_data(config, _get_f_mpc, plot_fn, low, high, domain, _key)
+    # key, _key = jrandom.split(key)
+    # test_data_x, test_data_y = get_initial_data((config, _get_f_mpc, plot_fn, low, high, domain, _key)
 
     @partial(jax.jit, static_argnums=(1,))
     def execute_gt_mpc(init_obs, f, key):
@@ -143,12 +120,6 @@ def run_train(config):
     batch_key = jrandom.split(key, config.NUM_EVAL_TRIALS)
     start_gt_time = time.time()
     true_paths, test_points, path_lengths, all_returns = jax.vmap(execute_gt_mpc, in_axes=(None, None, 0))(start_obs, _get_f_mpc, batch_key)
-    flattened_true_paths = jax.tree_util.tree_map(lambda x: x.reshape((x.shape[0] * x.shape[1], -1)), true_paths)
-    # df_1 = pd.DataFrame(true_path["exe_path_x"][0])
-    # df_2 = pd.DataFrame(true_path["exe_path_x"][1])
-    # df_1.to_csv("data_file_1.csv")
-    # df_2.to_csv("data_file_2.csv")
-    # flattened_test_points = jax.tree_util.tree_map(lambda x: x.reshape((config.TEST_SET_SIZE, -1)), test_points)
     logging.info(f"Ground truth time taken = {time.time() - start_gt_time:.2f}s; "
                  f"Mean Return = {jnp.mean(all_returns):.2f}; Std Return = {jnp.std(all_returns):.2f}; "
                  f"Mean Path Lengths = {jnp.mean(path_lengths)}; ")

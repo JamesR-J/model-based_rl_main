@@ -54,7 +54,7 @@ class GPModel(Module, abc.ABC):
         likelihood_params = self.likelihood.get_params()
         mean_function_params = self.mean_function.get_params()
         if q_mu is None:
-            q_mu = jnp.zeros((1, self.num_latent_gps))  # dims = data points, num_gp
+            q_mu = jnp.zeros((1, self.num_latent_gps))  # dims = data points, num_gp  # TODO THIS IS THE ISSUE LOL AND THE OTHER ZERO MU SETTER I THINK LATER ON
         q_mu = jnp.array(q_mu)
         return {'kernel':kernel_params,
                 'likelihood': likelihood_params,

@@ -9,6 +9,7 @@ from flax.training.train_state import TrainState
 import flax
 from project_name.viz import make_plot_obs, scatter, plot
 import neatplot
+import jax.random as jrandom
 
 class MemoryState(NamedTuple):
     hstate: jnp.ndarray
@@ -116,6 +117,29 @@ def import_class_from_folder(folder_name):
     else:
         print(f"Error: Folder '{folder_name}' not found in any search paths.")
         return None
+
+
+def get_initial_data(config, f, plot_fn, low, high, domain, key):
+    def unif_random_sample_domain(low, high, key, n=1):
+        unscaled_random_sample = jrandom.uniform(key, shape=(n, low.shape[0]))
+        scaled_random_sample = low + (high - low) * unscaled_random_sample
+        return scaled_random_sample
+
+    data_x_LOPA = unif_random_sample_domain(low, high, key, n=config.NUM_INIT_DATA)
+    if config.GENERATIVE_ENV:
+        batch_key = jrandom.split(key, config.NUM_INIT_DATA)
+        data_y_LO = jax.vmap(f)(data_x_LOPA, batch_key)
+    else:
+        raise NotImplementedError("If not generative env then we have to output nothing, unsure how to do in Jax")
+
+    # Plot initial data
+    ax_obs_init, fig_obs_init = plot_fn(path=None, domain=domain)
+    if ax_obs_init is not None and config.SAVE_FIGURES:
+        plot(ax_obs_init, data_x_LOPA, "o", color="k", ms=1)
+        fig_obs_init.suptitle("Initial Observations")
+        neatplot.save_figure("figures/obs_init", "png", fig=fig_obs_init)
+
+    return data_x_LOPA, data_y_LO
 
 
 def make_plots(plot_fn, domain, true_path, data, env, env_params, config, exe_path_list, real_paths_mpc, x_next, i):
