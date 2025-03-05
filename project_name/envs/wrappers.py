@@ -1,11 +1,12 @@
-from gymnasium import Env, spaces
+# from gymnasium import Env, spaces
+from gymnax.environments import environment, spaces
 from copy import deepcopy
 import numpy as np
 from project_name.utils import PlotTuple
 # import tensorflow as tf
 
 
-class NormalizedEnv(Env):
+class NormalizedEnv(environment.Environment):
     def __init__(self, wrapped_env, env_params):
         """
         Normalizes obs to be between -1 and 1
@@ -24,11 +25,13 @@ class NormalizedEnv(Env):
 
     def action_space(self, params=None) -> spaces.Box:
         """Action space of the environment."""
-        return self.unnorm_action_space
+        return spaces.Box(-1, -1, shape=(self.unnorm_action_space.shape[0],))
 
     def observation_space(self, params=None) -> spaces.Box:
         """Observation space of the environment."""
-        return self.unnorm_observation_space
+        return spaces.Box(low=-np.ones_like(self.unnorm_observation_space.low,),
+                          high=np.ones_like(self.unnorm_observation_space.high,),
+                          shape=(self.unnorm_observation_space.shape[0],))
 
     @property
     def wrapped_env(self):

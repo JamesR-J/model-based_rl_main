@@ -114,20 +114,16 @@ def plot(ax, x, shape, **kwargs):
         ax.plot(x[:, 0], x[:, 1], shape, **kwargs)
 
 
-def plot_pilco_cartpole(
-    path, ax=None, fig=None, domain=None, path_str="samp", env=None
-):
+def plot_pilco_cartpole(path, ax=None, fig=None, domain=None, path_str="samp", env=None):
     """Plot a path through an assumed two-dimensional state space."""
     assert path_str in ["samp", "true", "postmean"]
     if ax is None:
         assert domain is not None
         fig, ax = plt.subplots(1, 1, figsize=(5, 5))
-        ax.set(
-            xlim=(-3, 3),
-            ylim=(-0.7, 0.7),
-            xlabel="$x$",
-            ylabel="$y$",
-        )
+        ax.set(xlim=(-3, 3),
+               ylim=(-0.7, 0.7),
+               xlabel="$x$",
+               ylabel="$y$")
         if path is None:
             return ax, fig
 

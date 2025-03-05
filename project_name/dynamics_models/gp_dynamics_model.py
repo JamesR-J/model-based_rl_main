@@ -25,8 +25,12 @@ class MOGP:
 
         num_latent_gps = self.obs_dim
 
-        ind_kernels = gpjaxas.kernels.SquaredExponential(lengthscales=jnp.ones(self.input_dim, dtype=jnp.float64), variance=2.0)
-        self.kernel = gpjaxas.kernels.SeparateIndependent([ind_kernels for _ in range(self.obs_dim)])
+        ls = jnp.array([[80430.37, 4.40, 116218.45, 108521.27, 103427.47], [290.01, 318.22, 0.39, 1.57, 33.17],
+             [1063051.24, 1135236.37, 1239430.67, 25.09, 1176016.11], [331.70, 373.98, 0.32, 1.88, 39.83]], dtype=jnp.float64)
+        alpha = jnp.array([0.26, 2.32, 11.59, 3.01], dtype=jnp.float64)  # TODO what is alpha?
+        sigma = 0.01  # TODO right?
+
+        self.kernel = gpjaxas.kernels.SeparateIndependent([gpjaxas.kernels.SquaredExponential(lengthscales=ls[idx], variance=sigma) for idx in range(self.obs_dim)])
         self.likelihood = gpjaxas.likelihoods.Gaussian(variance=3.0)
         self.mean_function = gpjaxas.mean_functions.Zero(output_dim=self.action_dim)
 

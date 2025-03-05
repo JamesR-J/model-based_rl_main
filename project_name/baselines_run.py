@@ -7,7 +7,7 @@ from typing import NamedTuple
 import chex
 from project_name.agents import Agent
 from project_name.envs.wrappers import NormalizedEnv, make_normalized_reward_function
-from project_name.utils import Transition, EvalTransition, PlotTuple, RealPath
+from project_name.utils import Transition, EvalTransition, PlotTuple, RealPath, make_plots
 import sys
 import gymnasium as gym
 from project_name import envs
@@ -19,11 +19,11 @@ from project_name import dynamics_models
 from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole  # TODO add some register thing here instead
 from functools import partial
 import time
-from project_name.viz import plotters, make_plot_obs, scatter, plot
-import matplotlib.pyplot as plt
+from project_name.viz import plotters, plot
 import numpy as np
 import neatplot
 from project_name.envs.wrappers import NormalizedEnv, make_normalized_reward_function, make_update_obs_fn, make_normalized_plot_fn
+import pandas as pd
 
 
 @struct.dataclass  # TODO dodgy for now and need to change the gymnax envs to be better for this
@@ -47,25 +47,26 @@ def run_train(config):
     obs_dim = len(env.observation_space(env_params).low)  # TODO is there a better way to write this?
     action_dim = env.action_space().shape[0]  # TODO same for this
 
-    low = np.concatenate([env.observation_space(env_params).low, jnp.expand_dims(jnp.array(env.action_space().low), axis=0)])
-    high = np.concatenate([env.observation_space(env_params).high, jnp.expand_dims(jnp.array(env.action_space().high), axis=0)])
-    domain = [elt for elt in zip(low, high)]  # TODO something to refine this
-
     # add plot functionality as required
     plot_fn = partial(plotters[config.ENV_NAME], env=env)  # TODO sort this out
 
     # normalise env if required as well as reward function
-    if config.NORMALISE_ENV:
+    if config.NORMALISE_ENV:  # TODO this does not work so need to fix
         env = NormalizedEnv(env, env_params)
         # if reward_function is not None:
         #     reward_function = make_normalized_reward_function(env, reward_function)
         plot_fn = make_normalized_plot_fn(env, env_params, plot_fn)
+
+    low = jnp.concatenate([env.observation_space(env_params).low, jnp.expand_dims(jnp.array(env.action_space().low), axis=0)])
+    high = jnp.concatenate([env.observation_space(env_params).high, jnp.expand_dims(jnp.array(env.action_space().high), axis=0)])
+    domain = [elt for elt in zip(low, high)]  # TODO something to refine this
 
     # TODO move the below somewhere better
     @partial(jax.jit, static_argnums=(2,))
     def _get_f_mpc(x_OPA, key, use_info_delta=False):  # TODO this should be generalised out of class at some point
         obs_O = x_OPA[:obs_dim]
         action_A = x_OPA[obs_dim:]
+        obs_O = env.unnormalize_obs(obs_O)  # TODO this dodgy fix still
         env_state = EnvState(x=obs_O[0], x_dot=obs_O[1], theta=obs_O[2], theta_dot=obs_O[3], time=0)  # TODO specific for cartpole, need to generalise this
         nobs_O, _, _, _, info = env.step(key, env_state, action_A, env_params)
         return nobs_O - obs_O
@@ -91,19 +92,17 @@ def run_train(config):
     # TODO as mentioned above we add obs and some arbitrary action, but this may impact the model greatly so should fix this
     # TODO generalise this and add some more dynamics models
 
-    def get_initial_data(config, env, f, plot_fn, key):
+    # @partial(jax.jit, static_argnums=(0, 1))
+    def get_initial_data(f, plot_fn, key):
         def unif_random_sample_domain(low, high, key, n=1):
             unscaled_random_sample = jrandom.uniform(key, shape=(n, low.shape[0]))
-            scaled_random_sample = low[..., :] + (high[..., :] - low[..., :]) * unscaled_random_sample
+            scaled_random_sample = low + (high - low) * unscaled_random_sample
             return scaled_random_sample
-
-        low = jnp.concatenate((env.observation_space(env_params).low, jnp.expand_dims(jnp.array(env.action_space().low,), axis=0)))
-        high = jnp.concatenate((env.observation_space(env_params).high, jnp.expand_dims(jnp.array(env.action_space().high,), axis=0)))
 
         data_x_LOPA = unif_random_sample_domain(low, high, key, n=config.NUM_INIT_DATA)
         if config.GENERATIVE_ENV:
             batch_key = jrandom.split(key, config.NUM_INIT_DATA)
-            data_y_LO = f(data_x_LOPA, batch_key)
+            data_y_LO = jax.vmap(f)(data_x_LOPA, batch_key)
         else:
             raise NotImplementedError("If not generative env then we have to output nothing, unsure how to do in Jax")
 
@@ -118,14 +117,14 @@ def run_train(config):
 
     # get some initial data for something, unsure what as of now? also a test set
     key, _key = jrandom.split(key)
-    init_data_x, init_data_y = get_initial_data(config, env, jax.vmap(_get_f_mpc), plot_fn, _key)  # TODO add plot function
+    init_data_x, init_data_y = get_initial_data(_get_f_mpc, plot_fn, _key)
     # key, _key = jrandom.split(key)
-    # test_data_x, test_data_y = get_initial_data(config, env, f, None, _key)  # TODO add plot function
+    # test_data_x, test_data_y = get_initial_data(jax.vmap(_get_f_mpc), plot_fn, _key
 
     @partial(jax.jit, static_argnums=(1,))
     def execute_gt_mpc(init_obs, f, key):
         key, _key = jrandom.split(key)
-        full_path, test_mpc_data, all_returns = actor.agent.run_algorithm_on_f(f, init_obs, _key,
+        full_path, test_mpc_data, all_returns = actor.agent.run_algorithm_on_f(f, init_obs, key,
                                                                   horizon=config.ENV_HORIZON,
                                                                   actions_per_plan=actor.agent.agent_config.ACTIONS_PER_PLAN)
         path_lengths = len(full_path[0])  # TODO should we turn the output into a dict for x and y ?
@@ -137,13 +136,18 @@ def run_train(config):
         # TODO ensure it samples the same pairs
 
         return true_path, test_points, path_lengths, all_returns
+    # TODO batching does nothing as the env does the same thing, why is this?
 
     # get some groundtruth data
     batch_key = jrandom.split(key, config.NUM_EVAL_TRIALS)
     start_gt_time = time.time()
-    true_path, test_points, path_lengths, all_returns = jax.vmap(execute_gt_mpc, in_axes=(None, None, 0))(start_obs, _get_f_mpc, batch_key)
-    flattened_true_path = jax.tree_util.tree_map(lambda x: x.reshape((x.shape[0] * x.shape[1], -1)), true_path)
-    flattened_test_points = jax.tree_util.tree_map(lambda x: x.reshape((config.TEST_SET_SIZE, -1)), test_points)
+    true_paths, test_points, path_lengths, all_returns = jax.vmap(execute_gt_mpc, in_axes=(None, None, 0))(start_obs, _get_f_mpc, batch_key)
+    flattened_true_paths = jax.tree_util.tree_map(lambda x: x.reshape((x.shape[0] * x.shape[1], -1)), true_paths)
+    # df_1 = pd.DataFrame(true_path["exe_path_x"][0])
+    # df_2 = pd.DataFrame(true_path["exe_path_x"][1])
+    # df_1.to_csv("data_file_1.csv")
+    # df_2.to_csv("data_file_2.csv")
+    # flattened_test_points = jax.tree_util.tree_map(lambda x: x.reshape((config.TEST_SET_SIZE, -1)), test_points)
     logging.info(f"Ground truth time taken = {time.time() - start_gt_time:.2f}s; "
                  f"Mean Return = {jnp.mean(all_returns):.2f}; Std Return = {jnp.std(all_returns):.2f}; "
                  f"Mean Path Lengths = {jnp.mean(path_lengths)}; ")
@@ -151,8 +155,8 @@ def run_train(config):
     # Plot groundtruth paths and print info
     ax_gt = None
     fig_gt = None
-    for idx in range(true_path["exe_path_x"].shape[0]):  # TODO sort the dodgy plotting
-        plot_path = PlotTuple(x=true_path["exe_path_x"][idx], y=true_path["exe_path_y"][idx])
+    for idx in range(true_paths["exe_path_x"].shape[0]):  # TODO sort the dodgy plotting
+        plot_path = PlotTuple(x=true_paths["exe_path_x"][idx], y=true_paths["exe_path_y"][idx])
         ax_gt, fig_gt = plot_fn(plot_path, ax_gt, fig_gt, domain, "samp")
     if fig_gt and config.SAVE_FIGURES:
         fig_gt.suptitle("Ground Truth Eval")
@@ -277,7 +281,7 @@ def run_train(config):
 
                 make_plots(plot_fn,
                            domain,
-                           PlotTuple(x=true_path["exe_path_x"], y=true_path["exe_path_y"]),
+                           PlotTuple(x=true_paths["exe_path_x"][-1], y=true_paths["exe_path_y"][-1]),  # TODO what is wrong with true path
                            PlotTuple(x=init_data_x, y=init_data_y),
                            env,
                            env_params,
@@ -313,64 +317,6 @@ def run_train(config):
     _main_loop(start_obs, start_env_state, key)
 
     return
-
-
-def make_plots(plot_fn, domain, true_path, data, env, env_params, config, exe_path_list, real_paths_mpc, x_next, i):
-    if len(data.x) == 0:
-        return
-    # Initialize various axes and figures
-    ax_all, fig_all = plot_fn(path=None, domain=domain)
-    ax_postmean, fig_postmean = plot_fn(path=None, domain=domain)
-    ax_samp, fig_samp = plot_fn(path=None, domain=domain)
-    ax_obs, fig_obs = plot_fn(path=None, domain=domain)
-    # Plot true path and posterior path samples
-    if true_path is not None:
-        ax_all, fig_all = plot_fn(true_path, ax_all, fig_all, domain, "true")
-    if ax_all is None:
-        return
-    # Plot observations
-    x_obs = make_plot_obs(data.x, env, env_params, config.NORMALISE_ENV)
-    scatter(ax_all, x_obs, color="grey", s=10, alpha=0.3)
-    plot(ax_obs, x_obs, "o", color="k", ms=1)
-
-    # Plot execution path posterior samples
-    for idx in range(exe_path_list["exe_path_x"].shape[0]):  # TODO sort the dodgy plotting
-        path = PlotTuple(x=exe_path_list["exe_path_x"][idx], y=exe_path_list["exe_path_y"][idx])
-        ax_all, fig_all = plot_fn(path, ax_all, fig_all, domain, "samp")
-        ax_samp, fig_samp = plot_fn(path, ax_samp, fig_samp, domain, "samp")
-
-    # plot posterior mean paths
-    for idx in range(real_paths_mpc.x.shape[0]):
-        path = RealPath(x=real_paths_mpc.x[idx], y=real_paths_mpc.y[idx], y_hat=real_paths_mpc.y_hat[idx])
-        ax_all, fig_all = plot_fn(path, ax_all, fig_all, domain, "postmean")
-        ax_postmean, fig_postmean = plot_fn(
-            path, ax_postmean, fig_postmean, domain, "samp"
-        )
-
-    # Plot x_next
-    x = make_plot_obs(x_next, env, env_params, config.NORMALISE_ENV)
-    scatter(ax_all, x, facecolors="deeppink", edgecolors="k", s=120, zorder=100)
-    plot(ax_obs, x, "o", mfc="deeppink", mec="k", ms=12, zorder=100)
-
-    try:
-        # set titles if there is a single axes
-        ax_all.set_title(f"All - Iteration {i}")
-        ax_postmean.set_title(f"Posterior Mean Eval - Iteration {i}")
-        ax_samp.set_title(f"Posterior Samples - Iteration {i}")
-        ax_obs.set_title(f"Observations - Iteration {i}")
-    except AttributeError:
-        # set titles for figures if they are multi-axes
-        fig_all.suptitle(f"All - Iteration {i}")
-        fig_postmean.suptitle(f"Posterior Mean Eval - Iteration {i}")
-        fig_samp.suptitle(f"Posterior Samples - Iteration {i}")
-        fig_obs.suptitle(f"Observations - Iteration {i}")
-
-    if config.SAVE_FIGURES:
-        # Save figure at end of evaluation
-        neatplot.save_figure(f"figures/all_{i}", "png", fig=fig_all)
-        neatplot.save_figure(f"figures/postmean_{i}", "png", fig=fig_postmean)
-        neatplot.save_figure(f"figures/samp_{i}", "png", fig=fig_samp)
-        neatplot.save_figure(f"figures/obs_{i}", "png", fig=fig_obs)
 
 
 if __name__ == "__main__":

@@ -197,9 +197,9 @@ class MPCAgent(AgentBase):
         def _outer_loop(outer_loop_state, unused):
             init_obs_O, init_mean, init_var, init_shift_actions_SB1, key = outer_loop_state
 
-            init_traj = MPCTransition(obs=jnp.zeros((self.agent_config.PLANNING_HORIZON, 1, self.obs_dim)),
-                                      action=jnp.zeros((self.agent_config.PLANNING_HORIZON, 1, self.action_dim)),
-                                      reward=jnp.ones((self.agent_config.PLANNING_HORIZON, 1, 1)) * -100)   # TODO this may need to be something other than zeros in case of negative rewards
+            init_traj = MPCTransition(obs=jnp.zeros((self.agent_config.PLANNING_HORIZON, self.n_keep, self.obs_dim)),
+                                      action=jnp.zeros((self.agent_config.PLANNING_HORIZON, self.n_keep, self.action_dim)),
+                                      reward=jnp.ones((self.agent_config.PLANNING_HORIZON, self.n_keep, 1)) * -100)   # TODO this may need to be something other than zeros in case of negative rewards
             init_obs_BO = jnp.tile(init_obs_O,(self.agent_config.BASE_NSAMPS + self.n_keep, 1))
             # TODO assumed const sample n for now
 
@@ -222,7 +222,6 @@ class MPCAgent(AgentBase):
                     obsacts_BOPA = jnp.concatenate((obs_BO, actions_BA), axis=-1)
                     batch_key = jrandom.split(_key, obs_BO.shape[0])
                     data_y_BO = jax.vmap(f)(obsacts_BOPA, batch_key)  # TODO check what this vmap is for, can we vmap outside the whole loop?
-                    # data_y_BO = jax.vmap(_get_f_mpc)(obsacts_BOPA, batch_key)
                     nobs_BO = self._obs_update_fn(obsacts_BOPA, data_y_BO)
                     reward_S1 = self.env.reward_function(obsacts_BOPA, nobs_BO, self.env_params)
                     return (nobs_BO, key), MPCTransitionXY(obs=nobs_BO, action=actions_BA, reward=jnp.expand_dims(reward_S1, axis=-1),
@@ -273,7 +272,8 @@ class MPCAgent(AgentBase):
                                                      self.agent_config.iCEM_ITERS)
 
             iCEM_traj_minus_xy = MPCTransition(obs=iCEM_traj.obs, action=iCEM_traj.action, reward=iCEM_traj.reward)
-            iCEM_traj_flipped = jax.tree_util.tree_map(lambda x: jnp.swapaxes(jnp.squeeze(x, axis=-2), 0, 1), iCEM_traj_minus_xy)
+            iCEM_traj_flipped = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), iCEM_traj_minus_xy)
+            iCEM_traj_flipped = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (x.shape[0], x.shape[1] * x.shape[2], x.shape[3])), iCEM_traj_flipped)
 
             all_returns_R1 = self._compute_returns(iCEM_traj_flipped.reward)
             best_sample_idx = jnp.argmax(all_returns_R1)

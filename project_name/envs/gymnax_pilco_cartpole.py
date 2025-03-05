@@ -180,14 +180,7 @@ class GymnaxPilcoCartPole(environment.Environment[EnvState, EnvParams]):
 
     def observation_space(self, params: EnvParams) -> spaces.Box:
         """Observation space of the environment."""
-        high = jnp.array(
-            [
-                10.0,
-                10.0,
-                3.14159,
-                25.0,
-            ]
-        )
+        high = jnp.array([10.0, 10.0, 3.14159, 25.0])
         return spaces.Box(-high, high, (4,), dtype=jnp.float32)
 
     def state_space(self, params: EnvParams) -> spaces.Dict:
