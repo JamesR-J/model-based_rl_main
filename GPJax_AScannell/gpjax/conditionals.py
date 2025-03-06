@@ -308,7 +308,7 @@ def base_conditional_with_lm(
         A = jsp.linalg.solve_triangular(Lm.T, A, lower=False)  # [M, N]
 
     # conditional mean
-    fmean = A.T @ f  # [N]
+    fmean = A.T @ f  # [N]  # TODO this is the issue for now
 
     # covariance due to inducing variables
     if q_sqrt is not None:
