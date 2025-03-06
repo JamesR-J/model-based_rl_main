@@ -10,6 +10,10 @@ import flax
 from project_name.viz import make_plot_obs, scatter, plot
 import neatplot
 import jax.random as jrandom
+from functools import partial
+import logging
+from gymnax.environments import environment
+from flax import struct
 
 class MemoryState(NamedTuple):
     hstate: jnp.ndarray
@@ -58,8 +62,6 @@ class RealPath(NamedTuple):
     x: jnp.ndarray
     y: jnp.ndarray
     y_hat: jnp.ndarray
-
-
 
 class TransitionFlashbax(NamedTuple):
     done: jnp.ndarray
@@ -119,7 +121,66 @@ def import_class_from_folder(folder_name):
         return None
 
 
-def get_initial_data(config, f, plot_fn, low, high, domain, key):
+@struct.dataclass  # TODO dodgy for now and need to change the gymnax envs to be better for this
+class EnvState(environment.EnvState):
+    # x: jnp.ndarray
+    # x_dot: jnp.ndarray
+    theta: jnp.ndarray
+    theta_dot: jnp.ndarray
+    time: int
+
+
+@partial(jax.jit, static_argnums=(1, 2))
+def get_f_mpc(x_OPA, env, env_params, key):
+    obs_O = x_OPA[..., :env.obs_dim]
+    action_A = x_OPA[..., env.obs_dim:]
+    # unnorm_obs_O = env.unnormalise_obs(obs_O)  # TODO this dodgy fix still
+    # env_state = EnvState(x=unnorm_obs_O[0], x_dot=unnorm_obs_O[1], theta=unnorm_obs_O[2], theta_dot=unnorm_obs_O[3], time=0)  # TODO specific for cartpole, need to generalise this
+    # env_state = EnvState(theta=unnorm_obs_O[0], theta_dot=unnorm_obs_O[1], time=0)  # TODO specific for pendulum, need to generalise
+    env_state = EnvState(theta=obs_O[0], theta_dot=obs_O[1], time=0)
+    nobs_O, _, _, _, info = env.step(key, env_state, action_A, env_params)
+    return nobs_O - obs_O
+
+@partial(jax.jit, static_argnums=(1, 2))
+def get_f_mpc_teleport(x_OPA, env, env_params, key):
+    obs_O = x_OPA[..., :env.obs_dim]
+    action_A = x_OPA[..., env.obs_dim:]
+    # unnorm_obs_O = env.unnormalise_obs(obs_O)  # TODO this dodgy fix still
+    # env_state = EnvState(x=unnorm_obs_O[0], x_dot=unnorm_obs_O[1], theta=unnorm_obs_O[2], theta_dot=unnorm_obs_O[3], time=0)  # TODO specific for cartpole, need to generalise this
+    # env_state = EnvState(theta=unnorm_obs_O[0], theta_dot=unnorm_obs_O[1], time=0)  # TODO specific for pendulum, need to generalise
+    env_state = EnvState(theta=obs_O[0], theta_dot=obs_O[1], time=0)
+    _, _, _, _, info = env.step(key, env_state, action_A, env_params)
+    return info["delta_obs"]
+
+@partial(jax.jit, static_argnums=(2, 3))
+def update_obs_fn(x, y, env, env_params):
+    start_obs = x[..., :env.obs_dim]
+    delta_obs = y[..., -env.obs_dim:]  # TODO check this okay if add stuff to the y, potentially reward
+    output = start_obs + delta_obs
+    return output
+
+@partial(jax.jit, static_argnums=(2, 3))
+def update_obs_fn_teleport(x, y, env, env_params):
+    start_obs = x[..., :env.obs_dim]
+    delta_obs = y[..., -env.obs_dim:]
+    output = start_obs + delta_obs
+
+    shifted_output_og = output - env.observation_space(env_params).low
+    obs_range = env.observation_space(env_params).high - env.observation_space(env_params).low
+    shifted_output = jnp.remainder(shifted_output_og, obs_range)
+    modded_output = shifted_output_og + (env.periodic_dim * shifted_output) - (env.periodic_dim * shifted_output_og)
+    wrapped_output = modded_output + env.observation_space(env_params).low
+    return wrapped_output
+
+
+def get_start_obs(env, key, obs=None):  # TODO some if statement if have some fixed start point
+    key, _key = jrandom.split(key)
+    obs, env_state = env.reset(_key)
+    logging.info(f"Start obs: {obs}")
+    return obs, env_state
+
+
+def get_initial_data(config, f, plot_fn, low, high, domain, env, env_params, key, train=False):
     def unif_random_sample_domain(low, high, key, n=1):
         unscaled_random_sample = jrandom.uniform(key, shape=(n, low.shape[0]))
         scaled_random_sample = low + (high - low) * unscaled_random_sample
@@ -128,16 +189,17 @@ def get_initial_data(config, f, plot_fn, low, high, domain, key):
     data_x_LOPA = unif_random_sample_domain(low, high, key, n=config.NUM_INIT_DATA)
     if config.GENERATIVE_ENV:
         batch_key = jrandom.split(key, config.NUM_INIT_DATA)
-        data_y_LO = jax.vmap(f)(data_x_LOPA, batch_key)
+        data_y_LO = jax.vmap(f, in_axes=(0, None, None, 0))(data_x_LOPA, env, env_params, batch_key)
     else:
         raise NotImplementedError("If not generative env then we have to output nothing, unsure how to do in Jax")
 
     # Plot initial data
-    ax_obs_init, fig_obs_init = plot_fn(path=None, domain=domain)
-    if ax_obs_init is not None and config.SAVE_FIGURES:
-        plot(ax_obs_init, data_x_LOPA, "o", color="k", ms=1)
-        fig_obs_init.suptitle("Initial Observations")
-        neatplot.save_figure("figures/obs_init", "png", fig=fig_obs_init)
+    if train:
+        ax_obs_init, fig_obs_init = plot_fn(path=None, domain=domain)
+        if ax_obs_init is not None and config.SAVE_FIGURES:
+            plot(ax_obs_init, data_x_LOPA, "o", color="k", ms=1)
+            fig_obs_init.suptitle("Initial Observations")
+            neatplot.save_figure("figures/obs_init", "png", fig=fig_obs_init)
 
     return data_x_LOPA, data_y_LO
 

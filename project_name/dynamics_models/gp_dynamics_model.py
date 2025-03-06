@@ -9,6 +9,7 @@ from typing import List, Tuple, Dict, Optional, NamedTuple, Any
 from functools import partial
 import GPJax_AScannell as gpjaxas
 import optax
+import gpjax
 
 
 class MOGP:
@@ -36,14 +37,12 @@ class MOGP:
         self.kernel = gpjaxas.kernels.SeparateIndependent([gpjaxas.kernels.SquaredExponential(lengthscales=ls[idx], variance=sigma) for idx in range(self.obs_dim)])
         self.likelihood = gpjaxas.likelihoods.Gaussian(variance=3.0)
         self.mean_function = gpjaxas.mean_functions.Zero(output_dim=self.action_dim)
+        self.gp = gpjaxas.models.GPR(self.kernel, self.likelihood, self.mean_function, num_latent_gps=num_latent_gps)
 
-        self.gp = gpjaxas.models.GPModel(self.kernel, self.likelihood, self.mean_function, num_latent_gps=num_latent_gps)
-
-        # opt_init, opt_update, get_params = optax.adam(1e-3)
-
-    def create_train_state(self, init_data):
+    def create_train_state(self, init_data_x, init_data_y):
         params = self.gp.get_params()
-        params["train_data"] = init_data
+        params["train_data_x"] = init_data_x
+        params["train_data_y"] = init_data_y
         return params
 
     def get_post_mu_cov(self, XNew, params, train_data=None, full_cov=False):  # TODO if no data then return the prior mu and var

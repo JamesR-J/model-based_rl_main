@@ -224,8 +224,8 @@ def make_plot_obs(data, env, env_params, normalize_obs):
     if normalize_obs:
         norm_obs = x_data[..., :obs_dim]
         action = x_data[..., obs_dim:]
-        unnorm_obs = env.unnormalize_obs(norm_obs)
+        unnorm_obs = env.unnormalise_obs(norm_obs)
         action = x_data[..., obs_dim:]
-        unnorm_action = env.unnormalize_action(action)
+        unnorm_action = env.unnormalise_action(action)
         x_data = np.concatenate([unnorm_obs, unnorm_action], axis=-1)
     return x_data

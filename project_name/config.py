@@ -8,9 +8,8 @@ def get_config():
     # config.ENV_NAME = "pilcocartpole-v0"
     config.ENV_NAME = "bacpendulum-v0"
     config.NORMALISE_ENV = False  # TODO sort this out its so bad
-    # config.ENV_HORIZON = 200
-    config.GENERATIVE_ENV = True  # False
-    config.NO_ENV_RUN = False
+    config.GENERATIVE_ENV = True
+    config.TELEPORT = False  # aka teleporting in the original thing
 
     config.SAVE_FIGURES = True
 
@@ -19,7 +18,7 @@ def get_config():
     config.NUM_EVAL_TRIALS = 5
     config.EVAL_FREQ = 10
 
-    config.NUM_ITERS = 31#0
+    config.NUM_ITERS = 51#0
 
     config.TOTAL_TIMESTEPS = 2300000
     config.NUM_DEVICES = 1

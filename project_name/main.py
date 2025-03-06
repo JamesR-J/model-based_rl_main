@@ -10,7 +10,13 @@ import logging
 jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
 
 
+# TODO it is working when un-normalised, why does normalising it not work
+
 # TODO MUST DO a key check for the MPC
+
+# TODO check out the start obs and obs movement in baselines_run into the MPC as it is a bit unclear
+
+# TODO the biggest issue is the posterior samples, what is causing it?
 
 # TODO sort out this aidan scannall GPJax types, and also to make it work well
 

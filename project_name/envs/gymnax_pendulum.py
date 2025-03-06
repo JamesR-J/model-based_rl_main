@@ -31,6 +31,9 @@ class GymnaxPendulum(environment.Environment[EnvState, EnvParams]):
 
     def __init__(self):
         super().__init__()
+        self.obs_dim = 2
+
+        self.periodic_dim = jnp.array((1, 0))  # TODO is this the best way?
 
     @property
     def default_params(self) -> EnvParams:
@@ -52,11 +55,11 @@ class GymnaxPendulum(environment.Environment[EnvState, EnvParams]):
 
         costs = self._angle_normalise(newth) ** 2 + 0.1 * newthdot ** 2 + 0.001 * (u ** 2)
 
-        state = EnvState(theta=newth, theta_dot=newthdot, time=state.time + 1)
+        delta_s = jnp.array((unnorm_newth, newthdot)) - self.get_obs(state)
+
+        state = EnvState(theta=newth, theta_dot=newthdot, time=state.time+1)
 
         done = False
-
-        delta_s = None
 
         return (lax.stop_gradient(self.get_obs(state)),
                 lax.stop_gradient(state),

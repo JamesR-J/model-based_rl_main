@@ -24,15 +24,7 @@ from project_name.utils import MPCTransition, MPCTransitionXY, MPCTransitionXYR
 import gymnax
 from project_name.config import get_config
 from typing import Union, Tuple
-
-
-@struct.dataclass  # TODO dodgy for now and need to change
-class EnvState(environment.EnvState):
-    x: jnp.ndarray
-    x_dot: jnp.ndarray
-    theta: jnp.ndarray
-    theta_dot: jnp.ndarray
-    time: int
+from project_name.utils import update_obs_fn, update_obs_fn_teleport, get_f_mpc, get_f_mpc_teleport
 
 
 class MPCAgent(AgentBase):
@@ -53,6 +45,11 @@ class MPCAgent(AgentBase):
         # TODO match this to the other rl main stuff
 
         self.n_keep = ceil(self.agent_config.XI * self.agent_config.N_ELITES)
+
+        if config.TELEPORT:
+            self._update_fn = update_obs_fn_teleport
+        else:
+            self._update_fn = update_obs_fn
 
     def create_train_state(self):  # TODO what would this be in the end?
         return None, None
@@ -160,21 +157,22 @@ class MPCAgent(AgentBase):
 
         return samples.reshape(-1, 1)
 
-    @partial(jax.jit, static_argnums=(0,))
-    def _obs_update_fn(self, x, y):  # TODO depends on the env, need to instate this somehow
-        start_obs = x[:self.obs_dim]
-        delta_obs = y[-self.obs_dim:]
-        output = start_obs + delta_obs
-
-        # TODO the following is teleport stuff for cartpole
-        # shifted_output_og = output - self.env.observation_space(self.env_params).low
-        # mask = jnp.array((0, 0, 1, 0))  # TODO generalise this
-        # obs_range = self.env.observation_space(self.env_params).high - self.env.observation_space(self.env_params).low
-        # shifted_output = jnp.remainder(shifted_output_og, obs_range)
-        # modded_output = shifted_output_og + (mask * shifted_output) - (mask * shifted_output_og)
-        # output = modded_output + self.env.observation_space(self.env_params).low
-
-        return output
+    # @partial(jax.jit, static_argnums=(0,))
+    # def _obs_update_fn(self, x, y):  # TODO depends on the env, need to instate this somehow
+    #     start_obs = x[:self.obs_dim]
+    #     delta_obs = y[-self.obs_dim:]
+    #     output = start_obs + delta_obs
+    #
+    #     # TODO the following is teleport stuff for cartpole
+    #     shifted_output_og = output - self.env.observation_space(self.env_params).low
+    #     # mask = jnp.array((0, 0, 1, 0))  # TODO generalise this as this is for cartpole
+    #     mask = jnp.array((1, 0))  # TODO this is for pendulum
+    #     obs_range = self.env.observation_space(self.env_params).high - self.env.observation_space(self.env_params).low
+    #     shifted_output = jnp.remainder(shifted_output_og, obs_range)
+    #     modded_output = shifted_output_og + (mask * shifted_output) - (mask * shifted_output_og)
+    #     output = modded_output + self.env.observation_space(self.env_params).low
+    #
+    #     return output
 
     @partial(jax.jit, static_argnums=(0, 1))
     def _action_space_multi_sample(self, actions_per_plan, key):
@@ -220,8 +218,8 @@ class MPCAgent(AgentBase):
                         obs_O, key = runner_state
                         obsacts_OPA = jnp.concatenate((obs_O, actions_A))
                         key, _key = jrandom.split(key)
-                        data_y_O = f(obsacts_OPA, _key)
-                        nobs_O = self._obs_update_fn(obsacts_OPA, data_y_O)
+                        data_y_O = f(obsacts_OPA, self.env, self.env_params, _key)
+                        nobs_O = self._update_fn(obsacts_OPA, data_y_O, self.env, self.env_params)
                         reward = self.env.reward_function(obsacts_OPA, nobs_O, self.env_params)
                         return (nobs_O, key), MPCTransitionXY(obs=nobs_O,
                                                               action=actions_A,
@@ -428,8 +426,8 @@ class MPCAgent(AgentBase):
             obs_O, key = runner_state
             obsacts_OPA = jnp.concatenate((obs_O, actions_A), axis=-1)
             key, _key = jrandom.split(key)
-            data_y_O = f(obsacts_OPA, _key)
-            nobs_O = self._obs_update_fn(obsacts_OPA, data_y_O)
+            data_y_O = f(obsacts_OPA, None, None, _key)  # TODO do we need this?
+            nobs_O = self._update_fn(obsacts_OPA, data_y_O, self.env, self.env_params)
             return (nobs_O, key), obsacts_OPA
 
         _, x_list_SOPA = jax.lax.scan(jax.jit(_run_planning_horizon2), (obs_O, key), samples_S1)
@@ -442,8 +440,7 @@ class MPCAgent(AgentBase):
 
         # get posterior covariance for all exe_paths, so this be a vmap probably
         def _get_sample_cov(x_list_SOPA, exe_path_SOPA, params):
-            train_data = jnp.concatenate((params["train_data"], exe_path_SOPA["exe_path_x"]))
-            params["q_mu"] = jnp.zeros((train_data.shape[0], params["q_mu"].shape[-1]))  # TODO a dodgy workaround for now
+            train_data = jnp.concatenate((params["train_data_x"], exe_path_SOPA["exe_path_x"]))
             return dynamics_model.get_post_mu_cov(x_list_SOPA, params, train_data=train_data, full_cov=True)
 
         _, samp_cov = jax.vmap(_get_sample_cov, in_axes=(None, 0, None))(x_list_SOPA, exe_path_BSOPA, dynamics_model_params)
@@ -483,14 +480,7 @@ def test_MPC_algorithm():
     mpc = MPCAgent(env, env_params, get_config(), None, key)
     key, _key = jrandom.split(key)
 
-    def _get_f_mpc(x_OPA, key, use_info_delta=False):  # TODO this should be generalised out of class at some point
-        obs_O = x_OPA[:obs_dim]
-        action_A = x_OPA[obs_dim:]
-        env_state = EnvState(x=obs_O[0], x_dot=obs_O[1], theta=obs_O[2], theta_dot=obs_O[3], time=0)  # TODO specific for cartpole, need to generalise this
-        nobs_O, _, _, _, info = env.step(key, env_state, action_A, env_params)
-        return nobs_O - obs_O
-
-    f = _get_f_mpc  # TODO kinda weak but okay for now
+    f = get_f_mpc
 
     import time
     start_time = time.time()

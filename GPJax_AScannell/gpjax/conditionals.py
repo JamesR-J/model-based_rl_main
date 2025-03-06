@@ -122,10 +122,8 @@ def independent_output_conditional(
     f: Array,
     full_cov: Optional[bool] = False,
     full_output_cov: Optional[bool] = False,
-    q_sqrt: Optional[
-        Union[Array, Array]] = None,
-    white: Optional[bool] = False,
-):
+    q_sqrt: Optional[Union[Array, Array]] = None,
+    white: Optional[bool] = False):
     """Multi-output GP conditional where outputs are assumed independent."""
     Kmm = (kernel(kernel_params, X, X) + jnp.eye(X.shape[-2], dtype=X.dtype) * default_jitter())  # [P, M, M]
     Kmn = kernel(kernel_params, X, Xnew)  # [P, M, N]
@@ -308,7 +306,7 @@ def base_conditional_with_lm(
         A = jsp.linalg.solve_triangular(Lm.T, A, lower=False)  # [M, N]
 
     # conditional mean
-    fmean = A.T @ f  # [N]  # TODO this is the issue for now
+    fmean = A.T @ f  # [N]
 
     # covariance due to inducing variables
     if q_sqrt is not None:

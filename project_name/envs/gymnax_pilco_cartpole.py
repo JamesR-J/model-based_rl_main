@@ -39,14 +39,15 @@ class EnvParams(environment.EnvParams):
     b: float = 0.1  # friction coefficient
     theta_threshold_radians: float = 12 * 2 * jnp.pi / 360
     x_threshold: float = 2.4
-    max_steps_in_episode: int = 500  # v0 had only 200 steps!
     horizon: int = 25
 
 
 class GymnaxPilcoCartPole(environment.Environment[EnvState, EnvParams]):
     def __init__(self):
         super().__init__()
-        self.obs_shape = (4,)
+        self.obs_dim = 4
+
+        self.periodic_dim = jnp.array((0, 0, 1, 0))  # TODO is this the best way?
 
     @property
     def default_params(self) -> EnvParams:
@@ -60,8 +61,6 @@ class GymnaxPilcoCartPole(environment.Environment[EnvState, EnvParams]):
                  params: EnvParams) -> Tuple[chex.Array, EnvState, jnp.ndarray, jnp.ndarray, Dict[Any, Any]]:
                 """Performs step transitions in the environment."""
                 action = jnp.clip(action, -1, 1)[0] * params.force_mag
-
-                # prev_terminal = self.is_terminal(state, params)
 
                 costheta = jnp.cos(state.theta)
                 sintheta = jnp.sin(state.theta)
@@ -88,6 +87,8 @@ class GymnaxPilcoCartPole(environment.Environment[EnvState, EnvParams]):
                 squared_sigma = 0.25 ** 2
                 costs = 1 - jnp.exp(-0.5 * squared_distance / squared_sigma)
 
+                delta_s = jnp.array((x, x_dot, unnorm_theta, theta_dot)) - self.get_obs(state)
+
                 # Update state dict and evaluate termination conditions
                 state = EnvState(x=x,
                                  x_dot=x_dot,
@@ -97,8 +98,6 @@ class GymnaxPilcoCartPole(environment.Environment[EnvState, EnvParams]):
 
                 # done = self.is_terminal(state, params)
                 done = False  # TODO apparently always false
-
-                delta_s = None  # TODO may add this in if needed
 
                 return (lax.stop_gradient(self.get_obs(state)),
                         lax.stop_gradient(state),
