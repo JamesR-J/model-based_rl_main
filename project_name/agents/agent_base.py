@@ -2,17 +2,18 @@ import jax
 from typing import Tuple, Any
 import chex
 from functools import partial
+import jax.numpy as jnp
 
 
 class AgentBase:  # TODO sort this oot
-    # def __init__(self, env, env_params, key, config, utils):
-    #     self.config = config
-    #     self.env = env
-    #     self.env_params = env_params
+    def __init__(self, env, env_params, config, key):
+        self.config = config
+        self.env = env
+        self.env_params = env_params
 
-    # def create_train_state(self) -> Tuple[Any, Any]:
-    #     raise NotImplementedError
-    #
+    def create_train_state(self, init_data_x, init_data_y, key):
+        raise NotImplementedError
+
     # def reset_memory(self, mem_state) -> Any:
     #     raise NotImplementedError
     #
@@ -28,3 +29,9 @@ class AgentBase:  # TODO sort this oot
     # def update_encoding(self, train_state: Any, mem_state: Any, agent: int, obs_batch: chex.Array, action: chex.Array,
     #                     reward: chex.Array, done: chex.Array, key: chex.PRNGKey) -> Any:
     #     return mem_state
+
+    def make_postmean_func(self):
+        raise NotImplementedError
+
+    def get_next_point(self, curr_obs, train_state, key):
+        raise NotImplementedError

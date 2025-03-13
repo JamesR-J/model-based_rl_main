@@ -131,25 +131,27 @@ class EnvState(environment.EnvState):
 
 
 @partial(jax.jit, static_argnums=(1, 2))
-def get_f_mpc(x_OPA, env, env_params, key):
-    obs_O = x_OPA[..., :env.obs_dim]
-    action_A = x_OPA[..., env.obs_dim:]
+def get_f_mpc(x_OPA, env, env_params, train_state, key):
+    obs_1O = x_OPA[..., :env.obs_dim]
+    action_1A = x_OPA[..., env.obs_dim:]
+    obs_O = jnp.squeeze(obs_1O, axis=0)
     # unnorm_obs_O = env.unnormalise_obs(obs_O)  # TODO this dodgy fix still
     # env_state = EnvState(x=unnorm_obs_O[0], x_dot=unnorm_obs_O[1], theta=unnorm_obs_O[2], theta_dot=unnorm_obs_O[3], time=0)  # TODO specific for cartpole, need to generalise this
     # env_state = EnvState(theta=unnorm_obs_O[0], theta_dot=unnorm_obs_O[1], time=0)  # TODO specific for pendulum, need to generalise
     env_state = EnvState(theta=obs_O[0], theta_dot=obs_O[1], time=0)
-    nobs_O, _, _, _, info = env.step(key, env_state, action_A, env_params)
+    nobs_O, _, _, _, info = env.step(key, env_state, jnp.squeeze(action_1A, axis=0), env_params)
     return nobs_O - obs_O
 
 @partial(jax.jit, static_argnums=(1, 2))
-def get_f_mpc_teleport(x_OPA, env, env_params, key):
-    obs_O = x_OPA[..., :env.obs_dim]
-    action_A = x_OPA[..., env.obs_dim:]
+def get_f_mpc_teleport(x_OPA, env, env_params, train_state, key):
+    obs_1O = x_OPA[..., :env.obs_dim]
+    action_1A = x_OPA[..., env.obs_dim:]
+    obs_O = jnp.squeeze(obs_1O, axis=0)
     # unnorm_obs_O = env.unnormalise_obs(obs_O)  # TODO this dodgy fix still
     # env_state = EnvState(x=unnorm_obs_O[0], x_dot=unnorm_obs_O[1], theta=unnorm_obs_O[2], theta_dot=unnorm_obs_O[3], time=0)  # TODO specific for cartpole, need to generalise this
     # env_state = EnvState(theta=unnorm_obs_O[0], theta_dot=unnorm_obs_O[1], time=0)  # TODO specific for pendulum, need to generalise
     env_state = EnvState(theta=obs_O[0], theta_dot=obs_O[1], time=0)
-    _, _, _, _, info = env.step(key, env_state, action_A, env_params)
+    _, _, _, _, info = env.step(key, env_state, jnp.squeeze(action_1A, axis=0), env_params)
     return info["delta_obs"]
 
 @partial(jax.jit, static_argnums=(2, 3))
@@ -187,9 +189,10 @@ def get_initial_data(config, f, plot_fn, low, high, domain, env, env_params, key
         return scaled_random_sample
 
     data_x_LOPA = unif_random_sample_domain(low, high, key, n=config.NUM_INIT_DATA)
+    data_x_L1OPA = jnp.expand_dims(data_x_LOPA, axis=1)  # TODO kinda a dodgy fix
     if config.GENERATIVE_ENV:
         batch_key = jrandom.split(key, config.NUM_INIT_DATA)
-        data_y_LO = jax.vmap(f, in_axes=(0, None, None, 0))(data_x_LOPA, env, env_params, batch_key)
+        data_y_LO = jax.vmap(f, in_axes=(0, None, None, None, 0))(data_x_L1OPA, env, env_params, None, batch_key)
     else:
         raise NotImplementedError("If not generative env then we have to output nothing, unsure how to do in Jax")
 

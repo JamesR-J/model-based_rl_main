@@ -1,0 +1,1 @@
+from .TIPConfig import get_TIP_config

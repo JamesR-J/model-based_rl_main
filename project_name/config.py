@@ -9,7 +9,7 @@ def get_config():
     config.ENV_NAME = "bacpendulum-v0"
     config.NORMALISE_ENV = False  # TODO sort this out its so bad
     config.GENERATIVE_ENV = True
-    config.TELEPORT = False  # aka teleporting in the original thing
+    config.TELEPORT = True  # aka teleporting in the original thing
 
     config.SAVE_FIGURES = True
 
@@ -20,9 +20,6 @@ def get_config():
 
     config.NUM_ITERS = 51#0
 
-    config.TOTAL_TIMESTEPS = 2300000
-    config.NUM_DEVICES = 1
-
     # config.WANDB = "disabled"
     config.WANDB = "online"
 
@@ -31,17 +28,19 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = "MPC"
+    config.ROLLOUT_SAMPLING = True  # TODO understand this, I think it only matters for MPC based things?
+
+    # config.AGENT_TYPE = "MPC"
+    config.AGENT_TYPE = "TIP"
+    # config.AGENT_TYPE = "PETS"
 
     config.AGENT_CONFIG = {}
 
     return config
 
-# TODO need to clarify, for discrete there is only 1 d but A number of actions, for continuous there are Ad actions with a max and min scale
-
 
 """
-BELNOAZ LoL
+Suffixes
 B - Batch size, probably when using replay buffer
 E - Number of Episodes
 L - Episode Length/NUM_INNER_STEPS/Actions Per Plan
@@ -56,7 +55,4 @@ I - Number of elite tops for iCEM
 R - Number of iCEM iterations
 P - Plus
 M - Minus
-
-further maybes
-M - Number of Meta Episodes
 """

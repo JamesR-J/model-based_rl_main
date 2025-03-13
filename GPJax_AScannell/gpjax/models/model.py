@@ -100,9 +100,6 @@ class GPModel(Module, abc.ABC):
                         f_mean, f_cov = self.predict_f(params, Xnew, full_cov, full_output_cov)
 
                         if f_cov.ndim == 3:
-                            print("here")
-                            print(f_mean.shape)
-                            print(f_cov.shape)
                             samples = sample_mvn(key, f_mean.T, f_cov, num_samples)
                         elif f_cov.ndim == 2:
                             samples = sample_mvn_diag(key, f_mean.T, jnp.sqrt(f_cov.T), num_samples)
@@ -147,7 +144,7 @@ class GPR(GPModel):
     def predict_f(self,
                   params: dict,
                   Xnew: InputData,
-                  train_data: Optional[InputData] = None,
+                  # train_data: Optional[InputData] = None,
                   full_cov: bool = False,
                   full_output_cov: bool = False) -> MeanAndCovariance:
         """Compute mean and (co)variance of latent function at Xnew.

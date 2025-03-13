@@ -1,6 +1,8 @@
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
+
+# from . import AgentBase
 from ..utils import import_class_from_folder  # , batchify
 from functools import partial
 from typing import Any, Dict, Tuple
