@@ -28,6 +28,8 @@ from gpjax.typing import Array, FunctionalSample, KeyArray
 # from jaxtyping import FLoat
 from flax import nnx
 from typing import Union
+from jax import scipy as jsp
+from GPJax_AScannell.gpjax.config import default_jitter
 
 
 jax.config.update("jax_enable_x64", True)
@@ -182,3 +184,33 @@ class GPR(GPModel):
 
         return gp_predict_f(params, Xnew, params["train_data_x"], self.kernel, self.mean_function, err,
                             full_cov, full_output_cov, None, False)
+
+    def log_marginal_likelihood(self, params, data):
+        x, y = data
+        Kmm = self.kernel(params["kernel"], x, x) + jnp.eye(x.shape[-2], dtype=x.dtype) * default_jitter()  # [..., M, M]
+        Kmm += jnp.eye(x.shape[-2], dtype=x.dtype) * params["likelihood"]["variance"]
+        Lm = jsp.linalg.cholesky(Kmm, lower=True)
+        mx = self.mean_function(params["mean_function"], x)
+
+        def tf_multivariate_normal(x, mu, L):
+            """
+            Computes the log-density of a multivariate normal.
+
+            :param x: sample(s) for which we want the density
+            :param mu: mean(s) of the normal distribution
+            :param L: Cholesky decomposition of the covariance matrix
+            :return: log densities
+            """
+
+            d = x - mu
+            alpha = jsp.linalg.solve_triangular(L, d, lower=True)
+            num_dims = d.shape[0]
+            p = -0.5 * jnp.sum(jnp.square(alpha), axis=0)
+            p -= 0.5 * num_dims * jnp.log(2 * jnp.pi)
+            p -= jnp.sum(jnp.log(jnp.diagonal(L)))
+
+            return p
+
+        log_prob = tf_multivariate_normal(y, mx, Lm)
+
+        return jnp.sum(log_prob)

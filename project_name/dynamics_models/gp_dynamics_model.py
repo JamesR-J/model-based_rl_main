@@ -11,6 +11,7 @@ import GPJax_AScannell as gpjaxas
 import optax
 import gpjax
 from project_name.dynamics_models import DynamicsModelBase
+from GPJax_AScannell.gpjax.config import default_jitter
 
 
 class MOGP(DynamicsModelBase):
@@ -28,7 +29,7 @@ class MOGP(DynamicsModelBase):
 
         self.kernel = gpjaxas.kernels.SeparateIndependent([gpjaxas.kernels.SquaredExponential(lengthscales=self.ls[idx], variance=self.sigma) for idx in range(self.obs_dim)])
         self.likelihood = gpjaxas.likelihoods.Gaussian(variance=3.0)
-        self.mean_function = gpjaxas.mean_functions.Zero(output_dim=self.action_dim)
+        self.mean_function = gpjaxas.mean_functions.Zero(output_dim=self.obs_dim)  # it was action_dim
         self.gp = gpjaxas.models.GPR(self.kernel, self.likelihood, self.mean_function, num_latent_gps=num_latent_gps)
 
     def create_train_state(self, init_data_x, init_data_y, key):
@@ -37,23 +38,45 @@ class MOGP(DynamicsModelBase):
         params["train_data_y"] = init_data_y
         return params
 
-    # def pretrain_params(self, init_data_x, init_data_y, key):
-    #     # train on the data and update the ls and sigma etc for the rest
-    #     params = self.gp.get_params()
-    #     transforms = self.gp.get_transforms()  # TODO do we need this for a gp idk?
-    #     constrain_params = gpjaxas.parameters.build_constrain_params(transforms)
-    #
-    #     learning_rate = 1e-3
-    #     # learning_rate = 1e-2
-    #     num_epochs = 900
-    #
-    #     # Create optimizer
-    #     tx = optax.adam(learning_rate)
-    #     opt_state = tx.init(
-    #
-    #
-    #     # recreate a train_state if fitting params
-    #     return self.create_train_state(init_data_x, init_data_y, key)
+    def pretrain_params(self, init_data_x, init_data_y, key):
+        # train on the data and update the ls and sigma etc for the rest
+        params = self.gp.get_params()
+        transforms = self.gp.get_transforms()  # TODO do we need this for a gp idk?
+        constrain_params = gpjaxas.parameters.build_constrain_params(transforms)
+        params = constrain_params(params)
+
+        # TODO this is currently not working since we have multiple dimensions, that is the curr issues am running into
+        # TODO can we vmap this or is there a better way to go around this?
+        objective = lambda p, d: -self.gp.log_marginal_likelihood(p, d)
+        num_iters = 1000
+        learning_rate = 0.01
+        unroll = 1
+
+        # Create optimizer
+        tx = optax.adam(learning_rate)
+        opt_state = tx.init(params)
+
+        # Mini-batch random keys to scan over.
+        iter_keys = jrandom.split(key, num_iters)
+
+        train_data = (init_data_x, init_data_y)
+
+        # Optimisation step.
+        def step(carry, key):
+            params, opt_state = carry
+
+            loss_val, loss_gradient = jax.value_and_grad(objective)(params, train_data)
+            updates, opt_state = tx.update(loss_gradient, opt_state, params)
+            params = optax.apply_updates(params, updates)
+
+            carry = params, opt_state
+            return carry, loss_val
+
+        # Optimisation loop.
+        (params, _), history = jax.lax.scan(step, (params, opt_state), (iter_keys), unroll=unroll)
+
+        # recreate a train_state if fitting params
+        return self.create_train_state(init_data_x, init_data_y, key)
 
     def get_post_mu_cov(self, XNew, params, full_cov=False):  # TODO if no data then return the prior mu and var
         mu, std = self.gp.predict_f(params, XNew, full_cov=full_cov)

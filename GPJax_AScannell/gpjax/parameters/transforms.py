@@ -22,7 +22,7 @@ def build_constrain_params(transforms: dict) -> Callable:
             else:
                 return param
 
-        return jax.tree_util.tree_multimap(transform_param, params, transforms)
+        return jax.tree_util.tree_map(transform_param, params, transforms)
 
     return constrain_params
 
@@ -39,6 +39,6 @@ def build_unconstrain_params(transforms: dict) -> Callable:
             else:
                 return param
 
-        return jax.tree_util.tree_multimap(transform_param, params, transforms)
+        return jax.tree_util.tree_map(transform_param, params, transforms)
 
     return unconstrain_params

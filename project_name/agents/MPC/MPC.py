@@ -56,6 +56,9 @@ class MPCAgent(AgentBase):
     def create_train_state(self, init_data_x, init_data_y, key):  # TODO what would this be in the end?
         return self.dynamics_model.create_train_state(init_data_x, init_data_y, key)
 
+    def pretrain_params(self, init_data_x, init_data_y, key):
+        return self.dynamics_model.pretrain_params(init_data_x, init_data_y, key)
+
     @partial(jax.jit, static_argnums=(0, 3, 4, 5))  # TODO should really verify this
     def powerlaw_psd_gaussian_jax(self, key, exponent, base_nsamps, action_dim, time_horizon, fmin=0.0) -> jnp.ndarray:
                                 """JAX implementation of Gaussian (1/f)**beta noise.

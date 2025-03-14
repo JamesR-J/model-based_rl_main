@@ -9,15 +9,19 @@ import logging
 
 jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
 
-# TODO add in some hyperparm fit from initial data, OR some preloaded hyperparams
+# TODO focus on getting PETS to work
 
-# TODO if we want to pretend we have no existing data how would this work?
+# TODO add in some hyperparm fit from initial data, OR some preloaded hyperparams, this a mare with the GPs but good learning
+# TODO can do GPs last and focus on the PETS pre fit if possible
+
+# TODO if we want to pretend we have no existing data how would this work? This may be a struggle with Jax so need to
+# TODO figure the best approach
 
 # TODO sort out all the right shapes, so we don't have to arbitrarily squeeze and add dims in MPC, also can we avoid postmean_func2
 
-# TODO replace the updating dataset with flashbax maybe?
+# TODO replace the updating dataset with flashbax maybe? would this be more efficient or less?
 
-# TODO sort out this aidan scannall GPJax types, and also to make it work well
+# TODO sort out this aidan scannall GPJax types, and also to make it work well, can we improve batch optimisation?
 
 # env, env_params = gymnax.make("MountainCarContinuous-v0")
 # TODO make these envs in gymnax style for continuous control
