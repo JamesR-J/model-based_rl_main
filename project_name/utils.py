@@ -11,7 +11,7 @@ from project_name.viz import make_plot_obs, scatter, plot
 import neatplot
 import jax.random as jrandom
 from functools import partial
-import logging
+from absl import logging
 from gymnax.environments import environment
 from flax import struct
 
@@ -161,7 +161,9 @@ def update_obs_fn_teleport(x, y, env, env_params):
 def get_start_obs(env, env_params, key):  # TODO some if statement if have some fixed start point
     key, _key = jrandom.split(key)
     obs, env_state = env.reset(_key, env_params)
-    logging.info(f"Start obs: {obs}")
+    # logging.info(f"Start obs: {obs}")
+    print(f"Start obs: {obs}")
+    # TODO changed the above due to an error
     return obs, env_state
 
 

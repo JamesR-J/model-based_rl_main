@@ -1,13 +1,13 @@
-from absl import app
+from absl import app, logging
 from project_name.baselines_run import run_train
 import wandb
 from project_name.config import get_config  # TODO dodge need to know how to fix this
 import jax
-from jax.lib import xla_bridge
-import logging
 
+logging.set_verbosity(logging.WARNING)  # TODO added in to prevent some weird gpjax logging error
 
 jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
+
 
 # TODO add in some hyperparm fit from initial data, OR some preloaded hyperparams
 
@@ -45,7 +45,8 @@ def main(_):
     # )
 
     config.DEVICE = jax.lib.xla_bridge.get_backend().platform
-    logging.info(f"Current JAX Device: {config.DEVICE}")
+    # logging.info(f"Current JAX Device: {config.DEVICE}")
+    print(logging.info(f"Current JAX Device: {config.DEVICE}"))  # TODO changed this cus of error
 
     with jax.disable_jit(disable=config.DISABLE_JIT):
         train = run_train(config)

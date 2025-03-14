@@ -41,7 +41,8 @@ class TIPAgent(MPCAgent):
         self.agent_config = get_TIP_config()
 
         # TODO add some import from folder check thingo
-        self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
+        # self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
+        self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
 
     def make_postmean_func_const_key(self):
         def _postmean_fn(x, unused1, unused2, train_state, key):
@@ -131,13 +132,13 @@ class TIPAgent(MPCAgent):
 
         # TODO this part is the acquisition function so should be generalised at some point rather than putting it here
         # get posterior covariance for x_set
-        _, post_cov = self.dynamics_model.get_post_mu_cov(x_list_SOPA, train_state, full_cov=True)
+        _, post_cov = self.dynamics_model.get_post_mu_full_cov(x_list_SOPA, train_state, full_cov=True)
 
         # get posterior covariance for all exe_paths, so this be a vmap probably
         def _get_sample_cov(x_list_SOPA, exe_path_SOPA, params):
             params["train_data_x"] = jnp.concatenate((params["train_data_x"], exe_path_SOPA["exe_path_x"]))
             params["train_data_y"] = jnp.concatenate((params["train_data_y"], exe_path_SOPA["exe_path_y"]))
-            return self.dynamics_model.get_post_mu_cov(x_list_SOPA, params, full_cov=True)
+            return self.dynamics_model.get_post_mu_full_cov(x_list_SOPA, params, full_cov=True)
         # TODO this is fairly slow as it feeds in a large amount of gp data to get the sample cov
         # TODO can we speed this up?
 
@@ -193,62 +194,3 @@ class TIPAgent(MPCAgent):
         # TODO can we make this jittable?
 
         return x_next, exe_path_BSOPA, curr_obs, train_state, acq_val, key
-
-def test_MPC_algorithm():
-    from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward
-    # from project_name.util.control_util import ResettableEnv, get_f_mpc
-    from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole
-
-    # env = CartPoleSwingUpEnv()
-    # plan_env = ResettableEnv(CartPoleSwingUpEnv())
-
-    key = jrandom.PRNGKey(42)
-    key, _key = jrandom.split(key)
-
-    # env, env_params = gymnax.make("MountainCarContinuous-v0")
-
-    env = GymnaxPilcoCartPole()
-    env_params = env.default_params
-    obs_dim = len(env.observation_space(env_params).low)
-
-    start_obs, env_state = env.reset(_key)
-
-    mpc = MPCAgent(env, env_params, get_config(), None, key)
-    key, _key = jrandom.split(key)
-
-    f = get_f_mpc
-
-    import time
-    start_time = time.time()
-
-    # with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
-    with jax.disable_jit(disable=False):
-        path, (observations, actions, rewards), _ = mpc.run_algorithm_on_f(f, start_obs, _key,
-                                                                        horizon=25,
-                                                                        actions_per_plan=mpc.agent_config.ACTIONS_PER_PLAN)
-    # batch_key = jrandom.split(_key, 25)
-    # path, (observations, actions, rewards) = jax.vmap(mpc.run_algorithm_on_f, in_axes=(None, None, 0))(None, start_obs, batch_key)
-    # path, observations, actions, rewards = path[0], observations[0], actions[0], rewards[0]
-
-    print(time.time() - start_time)
-
-    total_return = jnp.sum(rewards)
-    print(f"MPC gets {total_return} return with {len(path[0])} queries based on itself")
-    done = False
-    rewards = []
-    for i, action in enumerate(actions):
-        next_obs, env_state, rew, done, info = env.step(key, env_state, action, env_params)
-        if (next_obs != observations[i+1]).any():
-            error = jnp.linalg.norm(next_obs - observations[i+1])
-            print(f"i={i}, error={error}")
-        rewards.append(rew)
-        if done:
-            break
-    real_return = compute_return(rewards, 1.0)
-    print(f"based on the env it gets {real_return} return")
-
-    print(time.time() - start_time)
-
-
-if __name__ == "__main__":
-    test_MPC_algorithm()

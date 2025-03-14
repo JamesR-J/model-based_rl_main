@@ -12,7 +12,7 @@ from project_name import utils
 import sys
 import gymnasium as gym
 from project_name import envs
-import logging
+from absl import logging
 from project_name import dynamics_models
 from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole  # TODO add some register thing here instead
 from project_name.envs.gymnax_pendulum import GymnaxPendulum  # TODO add some register thing here instead
@@ -97,9 +97,13 @@ def run_train(config):
     batch_key = jrandom.split(_key, config.NUM_EVAL_TRIALS)
     start_gt_time = time.time()
     true_paths, test_points, path_lengths, all_returns = jax.vmap(execute_gt_mpc, in_axes=(None, None, 0))(start_obs, mpc_func, batch_key)
-    logging.info(f"Ground truth time taken = {time.time() - start_gt_time:.2f}s; "
+    # logging.info(f"Ground truth time taken = {time.time() - start_gt_time:.2f}s; "
+    #              f"Mean Return = {jnp.mean(all_returns):.2f}; Std Return = {jnp.std(all_returns):.2f}; "
+    #              f"Mean Path Lengths = {jnp.mean(path_lengths)}; ")
+    print(f"Ground truth time taken = {time.time() - start_gt_time:.2f}s; "
                  f"Mean Return = {jnp.mean(all_returns):.2f}; Std Return = {jnp.std(all_returns):.2f}; "
                  f"Mean Path Lengths = {jnp.mean(path_lengths)}; ")
+    # TODO changed the above due to an error
 
     # Plot groundtruth paths and print info
     ax_gt = None
@@ -115,8 +119,11 @@ def run_train(config):
     def _main_loop(curr_obs_O, data_x, data_y, train_state, env_state, key):
         for i in range(config.NUM_ITERS):
             # log some info that we need basically
-            logging.info("---" * 5 + f" Start iteration i={i} " + "---" * 5)
-            logging.info(f"Length of data.x: {len(data_x)}; Length of data.y: {len(data_y)}")
+            # logging.info("---" * 5 + f" Start iteration i={i} " + "---" * 5)
+            # logging.info(f"Length of data.x: {len(data_x)}; Length of data.y: {len(data_y)}")
+            print("---" * 5 + f" Start iteration i={i} " + "---" * 5)
+            print(f"Length of data.x: {len(data_x)}; Length of data.y: {len(data_y)}")
+            # TODO changed the above due to an error
 
             # TODO some if statement if our input data does not exist as not using generative approach, i.e. the first step
 
@@ -153,9 +160,13 @@ def run_train(config):
                 batch_key = jrandom.split(_key, config.NUM_EVAL_TRIALS)
                 start_obs, start_env_state = utils.get_start_obs(env, env_params, key)
                 real_paths_mpc, real_returns, mean_returns, std_returns, mse = jax.vmap(_eval_trial, in_axes=(None, None, 0))(start_obs, start_env_state, batch_key)
-                logging.info(f"Eval Returns = {real_returns}; Mean = {jnp.mean(mean_returns):.2f}; "
+                # logging.info(f"Eval Returns = {real_returns}; Mean = {jnp.mean(mean_returns):.2f}; "
+                #              f"Std = {jnp.std(std_returns):.2f}")  # TODO check the std
+                # logging.info(f"Model MSE = {jnp.mean(mse):.2f}")
+                print(f"Eval Returns = {real_returns}; Mean = {jnp.mean(mean_returns):.2f}; "
                              f"Std = {jnp.std(std_returns):.2f}")  # TODO check the std
-                logging.info(f"Model MSE = {jnp.mean(mse):.2f}")
+                print(f"Model MSE = {jnp.mean(mse):.2f}")
+                # TODO changed the above due to an error
 
                 # TODO add testing on the random test_data that we created initially
 
