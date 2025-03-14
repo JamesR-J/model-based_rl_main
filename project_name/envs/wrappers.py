@@ -7,9 +7,16 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from project_name import utils
 import jax
+from functools import partial
+import chex
+from typing import Any, Dict, Generic, Optional, Tuple, TypeVar, Union, overload
 
 
 jax.config.update("jax_enable_x64", True)
+
+
+TEnvState = TypeVar("TEnvState", bound="EnvState")
+TEnvParams = TypeVar("TEnvParams", bound="EnvParams")
 
 
 class NormalisedEnv(environment.Environment):
@@ -22,8 +29,6 @@ class NormalisedEnv(environment.Environment):
         self.unnorm_observation_space = self._wrapped_env.observation_space(env_params)
         self.unnorm_obs_space_size = self.unnorm_observation_space.high - self.unnorm_observation_space.low
         self.unnorm_action_space_size = self.unnorm_action_space.high - self.unnorm_action_space.low
-
-        # self.obs_dim = self._wrapped_env.obs_dim
 
     def action_space(self, params=None) -> spaces.Box:
         """Action space of the environment."""
@@ -39,14 +44,28 @@ class NormalisedEnv(environment.Environment):
     def wrapped_env(self):
         return self._wrapped_env
 
-    def reset(self, key, params=None):
+    @partial(jax.jit, static_argnums=(0,))
+    def reset_env(self, key: chex.PRNGKey, params: TEnvParams) -> Tuple[chex.Array, TEnvState]:
         unnorm_obs, env_state = self._wrapped_env.reset(key, params)
         return self.normalise_obs(unnorm_obs), env_state
 
-    def step(self, key, env_state, action, env_params):
+    @partial(jax.jit, static_argnums=(0,))
+    def step_env(self, key: chex.PRNGKey, state: TEnvState, action: Union[int, float, chex.Array],
+             params: TEnvParams) -> Tuple[chex.Array, TEnvState, jnp.ndarray, jnp.ndarray, Dict[Any, Any]]:
         unnorm_action = self.unnormalise_action(action)
-        # TODO if we feed in the custom env_state do we need to change this?
-        unnorm_obs, new_env_state, rew, done, info = self._wrapped_env.step(key, env_state, unnorm_action, env_params)
+        unnorm_obs, new_env_state, rew, done, info = self._wrapped_env.step_env(key, state, unnorm_action, params)
+
+        unnorm_delta_obs = info["delta_obs"]
+        norm_delta_obs = unnorm_delta_obs / self.unnorm_obs_space_size * 2
+        info["delta_obs"] = norm_delta_obs
+
+        return self.normalise_obs(unnorm_obs), new_env_state, rew, done, info
+
+    @partial(jax.jit, static_argnums=(0,))
+    def generative_step_env(self, key, norm_obs, action, params):
+        unnorm_init_obs = self.unnormalise_obs(norm_obs)
+        unnorm_action = self.unnormalise_action(action)
+        unnorm_obs, new_env_state, rew, done, info = self._wrapped_env.generative_step_env(key, unnorm_init_obs, unnorm_action, params)
 
         unnorm_delta_obs = info["delta_obs"]
         norm_delta_obs = unnorm_delta_obs / self.unnorm_obs_space_size * 2
@@ -65,18 +84,6 @@ class NormalisedEnv(environment.Environment):
 
         return rewards
 
-    @property
-    def horizon(self):
-        return self._wrapped_env.horizon
-
-    @horizon.setter
-    def horizon(self, h):
-        self._wrapped_env.horizon = h
-
-    def terminate(self):
-        if hasattr(self.wrapped_env, "terminate"):
-            self.wrapped_env.terminate()
-
     def __getattr__(self, attr):
         if attr == "_wrapped_env":
             raise AttributeError()
@@ -86,60 +93,68 @@ class NormalisedEnv(environment.Environment):
         return "{}({})".format(type(self).__name__, self.wrapped_env)
 
     def normalise_obs(self, obs):
-        # if len(obs.shape) == 1:
         low = self.unnorm_observation_space.low
         size = self.unnorm_obs_space_size
-        # else:
-        #     low = self.unnorm_observation_space.low[None, :]
-        #     size = self.unnorm_obs_space_size[None, :]
         pos_obs = obs - low
         norm_obs = (pos_obs / size * 2) - 1
         return norm_obs
 
     def unnormalise_obs(self, obs):
-        # if len(obs.shape) == 1:
         low = self.unnorm_observation_space.low
         size = self.unnorm_obs_space_size
-        # else:
-        #     low = self.unnorm_observation_space.low[None, :]
-        #     size = self.unnorm_obs_space_size[None, :]
         obs01 = (obs + 1) / 2
         obs_ranged = obs01 * size
         unnorm_obs = obs_ranged + low
         return unnorm_obs
 
     def unnormalise_action(self, action):
-        # if len(action.shape) == 1:
         low = self.unnorm_action_space.low
         size = self.unnorm_action_space_size
-        # else:
-        #     low = self.unnorm_action_space.low[None, :]
-        #     size = self.unnorm_action_space_size[None, :]
         act01 = (action + 1) / 2
         act_ranged = act01 * size
         unnorm_act = act_ranged + low
         return unnorm_act
 
     def normalise_action(self, action):
-        # if len(action.shape) == 1:
         low = self.unnorm_action_space.low
         size = self.unnorm_action_space_size
-        # else:
-        #     low = self.unnorm_action_space.low[None, :]
-        #     size = self.unnorm_action_space_size[None, :]
         pos_action = action - low
         norm_action = (pos_action / size * 2) - 1
         return norm_action
 
-    # def normalise_reward(self, x, y, params):
-    #     norm_obs = x[..., :self.obs_dim]
-    #     action = x[..., self.obs_dim:]
-    #     unnorm_action = self.unnormalise_action(action)
-    #     unnorm_obs = self.unnormalise_obs(norm_obs)
-    #     unnorm_x = np.concatenate([unnorm_obs, unnorm_action], axis=-1)
-    #     unnorm_y = self.unnormalise_obs(y)
-    #     rewards = self._wrapped_env.reward_function(unnorm_x, unnorm_y)
-    #     return rewards
+
+class GenerativeEnv(object):
+    def __init__(self, wrapper_env, env_params):
+        self._wrapper_env = wrapper_env
+        self.env_params = env_params
+
+    @property
+    def wrapper_env(self):
+        return self._wrapper_env
+
+    @partial(jax.jit, static_argnums=(0,))
+    def generative_step(self, key: chex.PRNGKey, orig_obs, action: Union[int, float, chex.Array],
+                        params: Optional[TEnvParams] = None) -> Tuple[chex.Array, TEnvState, jnp.ndarray, jnp.ndarray, Dict[Any, Any]]:
+        """Performs step transitions in the environment."""
+        # Use default env parameters if no others specified
+        if params is None:
+            params = self._wrapper_env.default_params
+        key, key_reset = jax.random.split(key)
+        obs_st, state_st, reward, done, info = self._wrapper_env.generative_step_env(key, orig_obs, action, params)
+        obs_re, state_re = self._wrapper_env.reset_env(key_reset, params)
+        # Auto-reset environment based on termination
+        state = jax.tree_map(lambda x, y: jax.lax.select(done, x, y), state_re, state_st)
+        obs = jax.lax.select(done, obs_re, obs_st)
+        return obs, state, reward, done, info
+
+    def __getattr__(self, attr):
+        if attr == "_wrapper_env":
+            raise AttributeError()
+        return getattr(self._wrapper_env, attr)
+
+    def __str__(self):
+        return "{}({})".format(type(self).__name__, self.wrapper_env)
+
 
 
 def make_normalised_plot_fn(norm_env, env_params, plot_fn):

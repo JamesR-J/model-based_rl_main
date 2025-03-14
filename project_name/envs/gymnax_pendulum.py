@@ -67,6 +67,10 @@ class GymnaxPendulum(environment.Environment[EnvState, EnvParams]):
                 done,
                 {"delta_obs": delta_s})
 
+    def generative_step_env(self, key, obs, action, params):
+        state = EnvState(theta=obs[0], theta_dot=obs[1], time=0)
+        return self.step_env(key, state, action, params)
+
     def _angle_normalise(self, x):
         return ((x + jnp.pi) % (2 * jnp.pi)) - jnp.pi
 

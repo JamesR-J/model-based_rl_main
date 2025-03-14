@@ -9,7 +9,9 @@ import logging
 
 jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
 
-# TODO it is working when un-normalised, why does normalising it not work
+# TODO add in some hyperparm fit from initial data, OR some preloaded hyperparams
+
+# TODO if we want to pretend we have no existing data how would this work?
 
 # TODO sort out all the right shapes, so we don't have to arbitrarily squeeze and add dims in MPC, also can we avoid postmean_func2
 
@@ -42,7 +44,7 @@ def main(_):
     #     mode=config.WANDB
     # )
 
-    config.DEVICE = jax.extend.backend.get_backend().platform
+    config.DEVICE = jax.lib.xla_bridge.get_backend().platform
     logging.info(f"Current JAX Device: {config.DEVICE}")
 
     with jax.disable_jit(disable=config.DISABLE_JIT):

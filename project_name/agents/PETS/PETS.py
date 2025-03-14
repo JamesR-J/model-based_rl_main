@@ -7,9 +7,6 @@ import numpy as np
 from math import ceil
 import logging
 
-from project_name.util.misc_util import dict_to_namespace
-from project_name.util.control_util import compute_return, iCEM_generate_samples
-from project_name.util.domain_util import project_to_domain
 from project_name.agents.agent_base import AgentBase
 
 import jax.numpy as jnp
@@ -41,9 +38,10 @@ class PETSAgent(MPCAgent):
         self.dynamics_model = dynamics_models.NeuralNetDynamicsModel(env, env_params, config, self.agent_config, key)
 
     def make_postmean_func(self):
-        def _postmean_fn(x, unused1, unused2, train_state, key):
-            mu = self.dynamics_model.get_post_mu_cov_samples(x, train_state, train_state["sample_key"], full_cov=False)
-            return jnp.squeeze(mu, axis=0)
+        def _postmean_fn(x, env, unused2, train_state, key):
+            mu, std = self.dynamics_model.predict(x, train_state, key)
+            # return jnp.squeeze(mu, axis=0)  # TODO in original it is obs + mu, check this
+            return x[..., :env.obs_dim] + mu
         return _postmean_fn
 
     @partial(jax.jit, static_argnums=(0, 2))

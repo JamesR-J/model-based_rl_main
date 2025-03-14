@@ -7,9 +7,9 @@ import numpy as np
 from math import ceil
 import logging
 
-from project_name.util.misc_util import dict_to_namespace
-from project_name.util.control_util import compute_return, iCEM_generate_samples
-from project_name.util.domain_util import project_to_domain
+# from project_name.util.misc_util import dict_to_namespace
+# from project_name.util.control_util import compute_return, iCEM_generate_samples
+# from project_name.util.domain_util import project_to_domain
 from project_name.agents.agent_base import AgentBase
 
 import jax.numpy as jnp
@@ -196,7 +196,7 @@ class TIPAgent(MPCAgent):
 
 def test_MPC_algorithm():
     from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward
-    from project_name.util.control_util import ResettableEnv, get_f_mpc
+    # from project_name.util.control_util import ResettableEnv, get_f_mpc
     from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole
 
     # env = CartPoleSwingUpEnv()

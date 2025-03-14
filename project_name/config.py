@@ -7,13 +7,14 @@ def get_config():
 
     # config.ENV_NAME = "pilcocartpole-v0"
     config.ENV_NAME = "bacpendulum-v0"
-    config.NORMALISE_ENV = False  # TODO sort this out its so bad
+    config.NORMALISE_ENV = True
     config.GENERATIVE_ENV = True
     config.TELEPORT = True  # aka teleporting in the original thing
+    config.PRETRAIN_HYPERPARAMS = False
+    config.NUM_INIT_DATA = 1  # 50
 
     config.SAVE_FIGURES = True
 
-    config.NUM_INIT_DATA = 1  # 50
     config.TEST_SET_SIZE = 100#0
     config.NUM_EVAL_TRIALS = 5
     config.EVAL_FREQ = 10

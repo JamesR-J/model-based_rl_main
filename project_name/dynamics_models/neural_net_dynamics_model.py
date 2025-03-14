@@ -29,56 +29,61 @@ class NeuralNetDynamicsModel(DynamicsModelBase):
         ensemble_keys = jrandom.split(key, self.agent_config.NUM_ENSEMBLE)
         return jax.vmap(create_ensemble_state, in_axes=(0,))(ensemble_keys)
 
-    def predict(self, params: Dict, state: Dict, obs, action, key):
-        raw_output = self._compute_net_output(params, state, obs, action)
+    def predict(self, x, train_state, key):
+        obs_BO = x[..., :self.obs_dim]
+        actions_BA = x[..., self.obs_dim:]
+        y_pred = train_state.apply_fn(train_state.params, obs_BO, actions_BA)
 
-        raw_prediction = reparameterized_gaussian_sampler(raw_output, rng_key)
-        # raw_prediction = raw_output  # TODO add in deterministic output
+        # TODO add in some deterministic check thingo as the below is stochastic and the above deterministic
 
-        # raw_prediction = denormalize(state["normalizer"]["output"], raw_prediction)
-        return self._next_obs_comp(obs, raw_prediction)
+        min_stddev = 1e-5
+        max_stddev = 100
+        delta = max_stddev - min_stddev
+        out_dim = y_pred.shape[-1] // 2
+        stddev_logit = y_pred[..., out_dim:]
+        std = min_stddev + delta * jax.nn.sigmoid(4 * (stddev_logit / delta))
+        mean = y_pred[..., :out_dim]
+        logstd = jnp.log(std)
 
-    def log_likelihood(self, params: Dict, state: Dict, obs, action, next_obs):
+        key, _key = jrandom.split(key)  # TODO do I need this split?
+        standard_normal_sample = jrandom.normal(_key, shape=mean.shape)
+
+        return mean + std * standard_normal_sample, std
+
+    def log_likelihood(self, x, nobs_BO, train_state, key):
         """Computes the log-likelihood of the target induced by (obs, next_obs) with respect to the model,
         conditioned on (obs, action).
 
         Note: For deterministic models, the log-likelihood is computed as if the network output is the mean of a
         multivariate Gaussian with identity covariance.
-
-        Args:
-            params: Dictionary of model parameters.
-            state: Dictionary of model state.
-            obs: Environment observation.
-            action: Action.
-            next_obs: Next environment observation.
-
-        Returns:
-            Log-likelihood.
         """
-        # raw_output = self._compute_net_output(params, state, obs, action)
-        # targ = normalize(state["normalizer"]["output"], self._targ_comp(obs, next_obs))
-        #
+
+        obs_BO = x[..., :self.obs_dim]
+        actions_BA = x[..., self.obs_dim:]
+        y_pred = train_state.apply_fn(train_state.params, obs_BO, actions_BA)
+
+        # TODO add in some deterministic check thingo as the below is stochastic and the above deterministic
+
+        min_stddev = 1e-5
+        max_stddev = 100
+        delta = max_stddev - min_stddev
+        out_dim = y_pred.shape[-1] // 2
+        stddev_logit = y_pred[..., out_dim:]
+        std = min_stddev + delta * jax.nn.sigmoid(4 * (stddev_logit / delta))
+        mean = y_pred[..., :out_dim]
+        logstd = jnp.log(std)
+
+        targ = nobs_BO - obs_BO  # TODO check this as in the original it is nobs - obs
+
         # if self.is_probabilistic:
         #     gaussian_params = raw_output
         # else:
         #     gaussian_params = {"mean": raw_output, "stddev": 1.}
-        #
-        # return gaussian_log_prob(gaussian_params, targ)
-        return
 
-    def _compute_net_output(self, params, state, obs, action):
-        # unnormalized_net_input = self._compute_unnormalized_net_input(obs, action)
-        # return self._internal_net.forward(
-        #     params["internal_net"],
-        #     state["internal_net"],
-        #     normalize(state["normalizer"]["input"], unnormalized_net_input)
-        # )
-        return
-
-    def _compute_unnormalized_net_input(self, obs, action):
-        preproc_obs = self._obs_preproc(obs)
-        return jnp.concatenate([preproc_obs, action])
-
+        dim = mean.size
+        weighted_mse = 0.5 * jnp.sum(jnp.square((targ - mean) / std))
+        log_det_cov = jnp.sum(logstd)
+        return -(weighted_mse + log_det_cov + (dim / 2) * jnp.log(2 * jnp.pi))
 
 class SimpleNetwork(nn.Module):
     agent_config: ConfigDict

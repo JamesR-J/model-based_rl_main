@@ -106,6 +106,10 @@ class GymnaxPilcoCartPole(environment.Environment[EnvState, EnvParams]):
                         {"discount": self.discount(state, params),
                          "delta_obs": delta_s})
 
+    def generative_step_env(self, key, obs, action, params):
+        state = EnvState(x=obs[0], x_dot=obs[1], theta=obs[2], theta_dot=obs[3], time=0)
+        return self.step_env(key, state, action, params)
+
     def _angle_normalise(self, x):
         return ((x + jnp.pi) % (2 * jnp.pi)) - jnp.pi
 

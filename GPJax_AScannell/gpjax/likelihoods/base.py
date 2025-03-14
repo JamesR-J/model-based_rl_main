@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from gpjax.base import Module
+from GPJax_AScannell.gpjax.base import Module
 import abc
 
 

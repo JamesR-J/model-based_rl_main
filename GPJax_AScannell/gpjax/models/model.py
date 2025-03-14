@@ -141,6 +141,20 @@ class GPR(GPModel):
                 'likelihood': likelihood_params,
                 "mean_function": mean_function_params}
 
+    def get_transforms(self) -> dict:
+        kernel_transforms = self.kernel.get_transforms()
+        if self.likelihood is not None:
+            likelihood_transforms = self.likelihood.get_transforms()
+        else:
+            likelihood_transforms = {}
+        mean_function_transforms = self.mean_function.get_transforms()
+
+        return {
+            "kernel": kernel_transforms,
+            "likelihood": likelihood_transforms,
+            "mean_function": mean_function_transforms,
+        }
+
     def predict_f(self,
                   params: dict,
                   Xnew: InputData,

@@ -121,25 +121,12 @@ def import_class_from_folder(folder_name):
         return None
 
 
-@struct.dataclass  # TODO dodgy for now and need to change the gymnax envs to be better for this
-class EnvState(environment.EnvState):
-    # x: jnp.ndarray
-    # x_dot: jnp.ndarray
-    theta: jnp.ndarray
-    theta_dot: jnp.ndarray
-    time: int
-
-
 @partial(jax.jit, static_argnums=(1, 2))
 def get_f_mpc(x_OPA, env, env_params, train_state, key):
     obs_1O = x_OPA[..., :env.obs_dim]
     action_1A = x_OPA[..., env.obs_dim:]
     obs_O = jnp.squeeze(obs_1O, axis=0)
-    # unnorm_obs_O = env.unnormalise_obs(obs_O)  # TODO this dodgy fix still
-    # env_state = EnvState(x=unnorm_obs_O[0], x_dot=unnorm_obs_O[1], theta=unnorm_obs_O[2], theta_dot=unnorm_obs_O[3], time=0)  # TODO specific for cartpole, need to generalise this
-    # env_state = EnvState(theta=unnorm_obs_O[0], theta_dot=unnorm_obs_O[1], time=0)  # TODO specific for pendulum, need to generalise
-    env_state = EnvState(theta=obs_O[0], theta_dot=obs_O[1], time=0)
-    nobs_O, _, _, _, info = env.step(key, env_state, jnp.squeeze(action_1A, axis=0), env_params)
+    nobs_O, _, _, _, info = env.generative_step(key, obs_O, jnp.squeeze(action_1A, axis=0), env_params)
     return nobs_O - obs_O
 
 @partial(jax.jit, static_argnums=(1, 2))
@@ -147,11 +134,7 @@ def get_f_mpc_teleport(x_OPA, env, env_params, train_state, key):
     obs_1O = x_OPA[..., :env.obs_dim]
     action_1A = x_OPA[..., env.obs_dim:]
     obs_O = jnp.squeeze(obs_1O, axis=0)
-    # unnorm_obs_O = env.unnormalise_obs(obs_O)  # TODO this dodgy fix still
-    # env_state = EnvState(x=unnorm_obs_O[0], x_dot=unnorm_obs_O[1], theta=unnorm_obs_O[2], theta_dot=unnorm_obs_O[3], time=0)  # TODO specific for cartpole, need to generalise this
-    # env_state = EnvState(theta=unnorm_obs_O[0], theta_dot=unnorm_obs_O[1], time=0)  # TODO specific for pendulum, need to generalise
-    env_state = EnvState(theta=obs_O[0], theta_dot=obs_O[1], time=0)
-    _, _, _, _, info = env.step(key, env_state, jnp.squeeze(action_1A, axis=0), env_params)
+    _, _, _, _, info = env.generative_step(key, obs_O, jnp.squeeze(action_1A, axis=0), env_params)
     return info["delta_obs"]
 
 @partial(jax.jit, static_argnums=(2, 3))
@@ -175,9 +158,9 @@ def update_obs_fn_teleport(x, y, env, env_params):
     return wrapped_output
 
 
-def get_start_obs(env, key, obs=None):  # TODO some if statement if have some fixed start point
+def get_start_obs(env, env_params, key):  # TODO some if statement if have some fixed start point
     key, _key = jrandom.split(key)
-    obs, env_state = env.reset(_key)
+    obs, env_state = env.reset(_key, env_params)
     logging.info(f"Start obs: {obs}")
     return obs, env_state
 

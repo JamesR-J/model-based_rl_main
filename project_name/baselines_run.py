@@ -6,14 +6,13 @@ import wandb
 from typing import NamedTuple
 import chex
 from project_name.agents import Agent
-from project_name.envs.wrappers import NormalisedEnv, make_normalised_plot_fn
+from project_name.envs.wrappers import NormalisedEnv, GenerativeEnv, make_normalised_plot_fn
 from project_name.utils import Transition, EvalTransition, PlotTuple, RealPath
 from project_name import utils
 import sys
 import gymnasium as gym
 from project_name import envs
 import logging
-import gymnax
 from project_name import dynamics_models
 from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole  # TODO add some register thing here instead
 from project_name.envs.gymnax_pendulum import GymnaxPendulum  # TODO add some register thing here instead
@@ -30,18 +29,17 @@ def run_train(config):
     # env = GymnaxPilcoCartPole()
     env = GymnaxPendulum()
     env_params = env.default_params
-    obs_dim = len(env.observation_space(env_params).low)  # TODO is there a better way to write this?
-    action_dim = env.action_space().shape[0]  # TODO same for this
+    action_dim = env.action_space().shape[0]  # TODO is there a better way to write this?
 
     # add plot functionality as required
     plot_fn = partial(plotters[config.ENV_NAME], env=env)  # TODO sort this out
 
-    # normalise env if required as well as reward function
-    if config.NORMALISE_ENV:  # TODO this does not work so need to fix
+    # normalise env if required
+    if config.NORMALISE_ENV:
         env = NormalisedEnv(env, env_params)
-        # if reward_function is not None:
-        #     reward_function = make_normalized_reward_function(env, reward_function)
         plot_fn = make_normalised_plot_fn(env, env_params, plot_fn)
+    if config.GENERATIVE_ENV:
+        env = GenerativeEnv(env, env_params)
 
     low = jnp.concatenate([env.observation_space(env_params).low, jnp.expand_dims(jnp.array(env.action_space(env_params).low), axis=0)])
     high = jnp.concatenate([env.observation_space(env_params).high, jnp.expand_dims(jnp.array(env.action_space(env_params).high), axis=0)])
@@ -56,13 +54,12 @@ def run_train(config):
         raise NotImplementedError("If not generative env then we do not have a mpc_func yet")
 
     # set the initial obs, i.e. env.reset but able to set a consistent start point
-    start_obs, start_env_state = utils.get_start_obs(env, key)
+    start_obs, start_env_state = utils.get_start_obs(env, env_params, key)
 
     # add the actor
     key, _key = jrandom.split(key)
     actor = utils.import_class_from_folder(config.AGENT_TYPE)(env=env, env_params=env_params, config=config, key=_key)
 
-    # TODO add some hyperparameter fit on the GT data or if we are evaluating the hyperparams using the below data
     # get some initial data for hyperparam tuning, unsure what else as of now? also a test set
     key, _key = jrandom.split(key)
     init_data_x, init_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
@@ -70,6 +67,9 @@ def run_train(config):
     key, _key = jrandom.split(key)
     test_data_x, test_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
                                                       _key)
+    if config.PRETRAIN_HYPERPARAMS:
+        key, _key = jrandom.split(key)
+        train_state = actor.pretrain_params(init_data_x, init_data_y, _key)
 
     key, _key = jrandom.split(key)
     train_state = actor.create_train_state(init_data_x, init_data_y, _key)
@@ -151,10 +151,10 @@ def run_train(config):
 
                 key, _key = jrandom.split(key)
                 batch_key = jrandom.split(_key, config.NUM_EVAL_TRIALS)
-                start_obs, start_env_state = utils.get_start_obs(env, key)
+                start_obs, start_env_state = utils.get_start_obs(env, env_params, key)
                 real_paths_mpc, real_returns, mean_returns, std_returns, mse = jax.vmap(_eval_trial, in_axes=(None, None, 0))(start_obs, start_env_state, batch_key)
                 logging.info(f"Eval Returns = {real_returns}; Mean = {jnp.mean(mean_returns):.2f}; "
-                             f"Std = {jnp.std(std_returns):.2f}")
+                             f"Std = {jnp.std(std_returns):.2f}")  # TODO check the std
                 logging.info(f"Model MSE = {jnp.mean(mse):.2f}")
 
                 # TODO add testing on the random test_data that we created initially
@@ -170,7 +170,7 @@ def run_train(config):
                 y_next_O = mpc_func(jnp.expand_dims(x_next_OPA, axis=0), env, env_params, train_state, _key)
                 new_env_state = "UHOH"
                 if config.ROLLOUT_SAMPLING:
-                    delta = y_next_O[-obs_dim:]
+                    delta = y_next_O[-env.obs_dim:]
                     nobs_O = actor._update_fn(curr_obs_O, delta, env, env_params)
                     # TODO sort the above out, it works when curr_obs doesn't change
                 else:
@@ -194,9 +194,3 @@ def run_train(config):
     _main_loop(start_obs, init_data_x, init_data_y, train_state, start_env_state, key)
 
     return
-
-
-if __name__ == "__main__":
-    config = get_config()
-    with jax.disable_jit(disable=True):
-        train = run_train(config)
