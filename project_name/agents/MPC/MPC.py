@@ -186,7 +186,6 @@ class MPCAgent(AgentBase):
                 key, _key = jrandom.split(key)
                 init_candidate_actions_BSA = self._iCEM_generate_samples(_key,
                                                                          self.agent_config.NUM_CANDIDATES,
-                                                                         # TODO have removed adaptive num_samples
                                                                          self.agent_config.PLANNING_HORIZON,
                                                                          mean_SA,
                                                                          var_SA)
@@ -223,28 +222,33 @@ class MPCAgent(AgentBase):
                 new_mean_SA = jnp.mean(elites_ISA, axis=0)
                 new_var_SA = jnp.var(elites_ISA, axis=0)
 
-                mpc_transition_xy_BSX = MPCTransitionXY(obs=planning_traj_BSX.obs,
-                                                        action=planning_traj_BSX.action,
-                                                        reward=planning_traj_BSX.reward,
-                                                        x=planning_traj_BSX.x,
-                                                        y=planning_traj_BSX.y)
+                mpc_transition_xy_BSX = MPCTransitionXY(obs=planning_traj_BSX.obs[elite_idx],
+                                                        action=planning_traj_BSX.action[elite_idx],
+                                                        reward=planning_traj_BSX.reward[elite_idx],
+                                                        x=planning_traj_BSX.x[elite_idx],
+                                                        y=planning_traj_BSX.y[elite_idx])
 
                 return (new_mean_SA, new_var_SA, key), mpc_transition_xy_BSX
 
-            (best_mean_SA, best_var_SA, key), iCEM_traj_RBSX = jax.lax.scan(_iter_iCEM,
+            (best_mean_SA, best_var_SA, key), iCEM_traj_RISX = jax.lax.scan(_iter_iCEM,
                                                                             (init_mean_SA, init_var_S1, key),
                                                                             None,
                                                                              self.agent_config.iCEM_ITERS)
 
-            iCEM_traj_minus_xy_RBSX = MPCTransition(obs=iCEM_traj_RBSX.obs,
-                                               action=iCEM_traj_RBSX.action,
-                                               reward=iCEM_traj_RBSX.reward)
-            iCEM_traj_minus_xy_BSX = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])), iCEM_traj_minus_xy_RBSX)
+            iCEM_traj_minus_xy_RISX = MPCTransition(obs=iCEM_traj_RISX.obs,
+                                               action=iCEM_traj_RISX.action,
+                                               reward=iCEM_traj_RISX.reward)
+            iCEM_traj_minus_xy_BSX = jax.tree_util.tree_map(lambda x: jnp.reshape(x,
+                                                                                  (x.shape[0] * x.shape[1],
+                                                                                   x.shape[2], x.shape[3])),
+                                                            iCEM_traj_minus_xy_RISX)
 
             # find the best sample from iCEM
             all_returns_B = self._compute_returns(jnp.squeeze(iCEM_traj_minus_xy_BSX.reward, axis=-1))
             best_sample_idx = jnp.argmax(all_returns_B)
             best_iCEM_traj_SX = jax.tree_util.tree_map(lambda x: x[best_sample_idx], iCEM_traj_minus_xy_BSX)
+            # TODO unsure if this is necessary as the below could also work fine
+            # best_iCEM_traj_SX = jax.tree_util.tree_map(lambda x: x[-1, 0], iCEM_traj_RISX)
 
             # take the number of actions of that plan and add to the existing plan
             planned_iCEM_traj_LX = jax.tree_util.tree_map(lambda x: x[:actions_per_plan], best_iCEM_traj_SX)
@@ -263,22 +267,22 @@ class MPCAgent(AgentBase):
                                                    jnp.swapaxes(new_actions_batch_LBA, 0, 1)), axis=1)
 
             # remake the mean for iCEM
-            end_mean_SA = jnp.concatenate((best_mean_SA[actions_per_plan:],
-                                        jnp.zeros((actions_per_plan, self.action_dim))))
-            end_var_SA = (jnp.ones_like(end_mean_SA) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
+            end_mean_SA = jnp.concatenate((best_mean_SA[actions_per_plan:], jnp.zeros((actions_per_plan, self.action_dim))))
+            end_var_SA = (jnp.ones_like(end_mean_SA) * ((self.env.action_space().high - self.env.action_space().low)
+                                                        / self.agent_config.INIT_VAR_DIVISOR) ** 2)
 
             return (curr_obs_O, end_mean_SA, end_var_SA, shifted_actions_BSA, key), MPCTransitionXYR(obs=planned_iCEM_traj_LX.obs,
                                                                                             action=planned_iCEM_traj_LX.action,
                                                                                             reward=planned_iCEM_traj_LX.reward,
-                                                                                            x=iCEM_traj_RBSX.x,
-                                                                                            y=iCEM_traj_RBSX.y,
+                                                                                            x=iCEM_traj_RISX.x,
+                                                                                            y=iCEM_traj_RISX.y,
                                                                                             returns=all_returns_B)
 
-        outer_loop_steps = horizon // actions_per_plan  # TODO ensure this is an equal division
+        outer_loop_steps = horizon // actions_per_plan
 
         init_mean_S1 = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.env.action_space().shape[0]))
         init_var_S1 = (jnp.ones_like(init_mean_S1) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
-        shift_actions_BSA = jnp.zeros((self.n_keep, self.agent_config.PLANNING_HORIZON, self.action_dim))  # TODO is this okay to add zeros?
+        shift_actions_BSA = jnp.zeros((self.n_keep, self.agent_config.PLANNING_HORIZON, self.action_dim))  # is this okay to add zeros?
 
         (_, _, _, _, key), overall_traj = jax.lax.scan(_outer_loop, (start_obs_O, init_mean_S1, init_var_S1, shift_actions_BSA, key), None, outer_loop_steps)
 
@@ -308,9 +312,6 @@ class MPCAgent(AgentBase):
 
     @partial(jax.jit, static_argnums=(0, 1, 5, 6))
     def execute_mpc(self, f, obs, train_state, key, horizon, actions_per_plan):
-
-        # TODO add some if statement and stuff if it will be open-loop
-
         full_path, output, _ = self.run_algorithm_on_f(f, obs, train_state, key, horizon, actions_per_plan)
 
         action = output[1]

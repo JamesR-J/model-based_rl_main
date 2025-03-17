@@ -57,16 +57,13 @@ class TIPAgent(MPCAgent):
         var = jnp.ones_like(mean) * ((self.env.action_space().high - self.env.action_space().low) / init_var_divisor) ** 2
 
         def _iter_iCEM2(iCEM2_runner_state, unused):  # TODO perhaps we can generalise this from above
-            mean_S1, var_S1, prev_samples, prev_returns, key = iCEM2_runner_state
+            mean_SA, var_SA, prev_samples, prev_returns, key = iCEM2_runner_state
             key, _key = jrandom.split(key)
             samples_BS1 = self._iCEM_generate_samples(_key,
                                                       self.agent_config.BASE_NSAMPS,
                                                       self.agent_config.PLANNING_HORIZON,
-                                                      self.agent_config.BETA,
-                                                      mean_S1,
-                                                      var_S1,
-                                                      self.env.action_space().low,
-                                                      self.env.action_space().high)
+                                                      mean_SA,
+                                                      var_SA)
 
             key, _key = jrandom.split(key)
             batch_key = jrandom.split(_key, self.agent_config.BASE_NSAMPS)

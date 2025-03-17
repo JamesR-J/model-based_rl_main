@@ -12,7 +12,7 @@ def get_MPC_config():
     config.GAMMA = 1.25  # This is something else not discount value
     config.DISCOUNT_FACTOR = 1.0
     config.N_ELITES = 3  # 6  # TODO check it works for diff numbers of this
-    config.iCEM_ITERS = 3  # 5
+    config.iCEM_ITERS = 3
     config.XI = 0.3
 
     config.ACTIONS_PER_PLAN = 6  # 1  # How many actions to keep out of each total plan iteration, must be less than planning horizon
