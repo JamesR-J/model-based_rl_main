@@ -51,9 +51,9 @@ class NeuralNetDynamicsModel(DynamicsModelBase):
 
         return mean + std * standard_normal_sample, std
 
-    # @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,))
     def update(self, data_x, data_y, train_state):
-        def log_likelihood(params, x, nobs_BO):
+        def _log_likelihood(params, x, nobs_BO):
                 """Computes the log-likelihood of the target induced by (obs, next_obs) with respect to the model,
                 conditioned on (obs, action).
 
@@ -88,11 +88,10 @@ class NeuralNetDynamicsModel(DynamicsModelBase):
                 log_det_cov = jnp.sum(logstd)
                 return -(weighted_mse + log_det_cov + (dim / 2) * jnp.log(2 * jnp.pi))
 
-        log_loss, grads = jax.vmap(jax.value_and_grad(log_likelihood, has_aux=False, argnums=0),
-                                   in_axes=(0, None, None))(train_state.params,
-                                                            data_x,
-                                                            data_y)
+        def _sum_ensemble_loss(params, data_x, data_y):
+            return -jnp.sum(jax.vmap(_log_likelihood, in_axes=0)(params, data_x, data_y))
 
+        log_loss, grads = jax.value_and_grad(_sum_ensemble_loss)(train_state.params, data_x, data_y)
         new_train_state = jax.vmap(lambda x, g: x.apply_gradients(grads=g))(train_state, grads)
 
         return jnp.mean(log_loss), new_train_state
