@@ -37,6 +37,22 @@ class PETSAgent(MPCAgent):
 
         self.dynamics_model = dynamics_models.NeuralNetDynamicsModel(env, env_params, config, self.agent_config, key)
 
+    def create_train_state(self, init_data_x, init_data_y, key):
+        return self.dynamics_model.create_train_state(init_data_x, init_data_y, key)
+
+    def pretrain_params(self, init_data_x, init_data_y, key):
+        # add some batch data call for each iteration of the loop
+
+        train_state = self.create_train_state(init_data_x, init_data_y, key)
+
+        def update_fn(update_state, unused):
+            loss, new_update_state = self.dynamics_model.update(init_data_x, init_data_y, update_state)
+            return new_update_state, loss
+
+        new_train_state, init_losses = jax.lax.scan(update_fn, train_state, None, self.agent_config.NUM_INIT_UPDATES)
+
+        return train_state
+
     def make_postmean_func(self):
         def _postmean_fn(x, env, unused2, train_state, key):
             mu, std = self.dynamics_model.predict(x, train_state, key)

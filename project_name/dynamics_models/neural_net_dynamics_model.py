@@ -9,6 +9,7 @@ from flax.training.train_state import TrainState
 from flax.linen.initializers import constant, orthogonal
 from project_name.dynamics_models import DynamicsModelBase
 from ml_collections import ConfigDict
+from functools import partial
 
 
 class NeuralNetDynamicsModel(DynamicsModelBase):
@@ -50,40 +51,51 @@ class NeuralNetDynamicsModel(DynamicsModelBase):
 
         return mean + std * standard_normal_sample, std
 
-    def log_likelihood(self, x, nobs_BO, train_state, key):
-        """Computes the log-likelihood of the target induced by (obs, next_obs) with respect to the model,
-        conditioned on (obs, action).
+    # @partial(jax.jit, static_argnums=(0,))
+    def update(self, data_x, data_y, train_state):
+        def log_likelihood(params, x, nobs_BO):
+                """Computes the log-likelihood of the target induced by (obs, next_obs) with respect to the model,
+                conditioned on (obs, action).
 
-        Note: For deterministic models, the log-likelihood is computed as if the network output is the mean of a
-        multivariate Gaussian with identity covariance.
-        """
+                Note: For deterministic models, the log-likelihood is computed as if the network output is the mean of a
+                multivariate Gaussian with identity covariance.
+                """
 
-        obs_BO = x[..., :self.obs_dim]
-        actions_BA = x[..., self.obs_dim:]
-        y_pred = train_state.apply_fn(train_state.params, obs_BO, actions_BA)
+                obs_BO = x[..., :self.obs_dim]
+                actions_BA = x[..., self.obs_dim:]
+                y_pred = train_state.apply_fn(params, obs_BO, actions_BA)
 
-        # TODO add in some deterministic check thingo as the below is stochastic and the above deterministic
+                # TODO add in some deterministic check thingo as the below is stochastic and the above deterministic
 
-        min_stddev = 1e-5
-        max_stddev = 100
-        delta = max_stddev - min_stddev
-        out_dim = y_pred.shape[-1] // 2
-        stddev_logit = y_pred[..., out_dim:]
-        std = min_stddev + delta * jax.nn.sigmoid(4 * (stddev_logit / delta))
-        mean = y_pred[..., :out_dim]
-        logstd = jnp.log(std)
+                min_stddev = 1e-5
+                max_stddev = 100
+                delta = max_stddev - min_stddev
+                out_dim = y_pred.shape[-1] // 2
+                stddev_logit = y_pred[..., out_dim:]
+                std = min_stddev + delta * jax.nn.sigmoid(4 * (stddev_logit / delta))
+                mean = y_pred[..., :out_dim]
+                logstd = jnp.log(std)
 
-        targ = nobs_BO - obs_BO  # TODO check this as in the original it is nobs - obs
+                targ = nobs_BO  - obs_BO  # TODO check this as in the original it is nobs - obs
 
-        # if self.is_probabilistic:
-        #     gaussian_params = raw_output
-        # else:
-        #     gaussian_params = {"mean": raw_output, "stddev": 1.}
+                # if self.is_probabilistic:
+                #     gaussian_params = raw_output
+                # else:
+                #     gaussian_params = {"mean": raw_output, "stddev": 1.}
 
-        dim = mean.size
-        weighted_mse = 0.5 * jnp.sum(jnp.square((targ - mean) / std))
-        log_det_cov = jnp.sum(logstd)
-        return -(weighted_mse + log_det_cov + (dim / 2) * jnp.log(2 * jnp.pi))
+                dim = mean.size
+                weighted_mse = 0.5 * jnp.sum(jnp.square((targ - mean) / std))
+                log_det_cov = jnp.sum(logstd)
+                return -(weighted_mse + log_det_cov + (dim / 2) * jnp.log(2 * jnp.pi))
+
+        log_loss, grads = jax.vmap(jax.value_and_grad(log_likelihood, has_aux=False, argnums=0),
+                                   in_axes=(0, None, None))(train_state.params,
+                                                            data_x,
+                                                            data_y)
+
+        new_train_state = jax.vmap(lambda x, g: x.apply_gradients(grads=g))(train_state, grads)
+
+        return jnp.mean(log_loss), new_train_state
 
 class SimpleNetwork(nn.Module):
     agent_config: ConfigDict
@@ -105,6 +117,7 @@ class SimpleNetwork(nn.Module):
         x = activation(x)
         x = nn.Dense(self.agent_config.HIDDEN_SIZE, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
         x = activation(x)
-        x = nn.Dense(self.obs_dim, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(x)
+        x = nn.Dense(self.obs_dim * 2, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(x)
+        # TODO check the above as it seems the og puts out a mean and std for each obs_dim
 
         return x

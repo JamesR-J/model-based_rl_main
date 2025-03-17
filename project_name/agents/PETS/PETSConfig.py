@@ -25,6 +25,7 @@ def get_PETS_config():
     config.LR = 1e-3
     config.NUM_ENSEMBLE = 10
     config.HIDDEN_SIZE = 64
+    config.NUM_INIT_UPDATES = 10
 
     """
     Current iCEM adaptions
