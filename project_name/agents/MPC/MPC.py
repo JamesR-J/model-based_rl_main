@@ -135,14 +135,18 @@ class MPCAgent(AgentBase):
                                 return y
 
     @partial(jax.jit, static_argnums=(0, 2, 3))
-    def _iCEM_generate_samples(self, key, nsamples, horizon, beta, mean, var, action_lower_bound, action_upper_bound):
+    def _iCEM_generate_samples(self, key, nsamples, horizon, mean, var):
         # samples = (colorednoise.powerlaw_psd_gaussian(beta, size=(nsamps, action_dim, horizon)).transpose([0, 2, 1])
         #            * np.sqrt(var) + mean)
-        samples = jnp.swapaxes(self.powerlaw_psd_gaussian_jax(key, beta, nsamples, self.action_dim, horizon),
+        samples = jnp.swapaxes(self.powerlaw_psd_gaussian_jax(key,
+                                                              self.agent_config.BETA,
+                                                              nsamples,
+                                                              self.action_dim,
+                                                              horizon),
                                1, 2)  * jnp.sqrt(var) + mean
         # TODO test this powerlaw thing
         # samples = jrandom.normal(key, shape=(nsamples, horizon, self.action_dim)) * jnp.sqrt(var) + mean
-        samples = jnp.clip(samples, action_lower_bound, action_upper_bound)
+        samples = jnp.clip(samples, self.env.action_space().low, self.env.action_space().high)
         return samples
 
     @partial(jax.jit, static_argnums=(0,))
@@ -185,17 +189,15 @@ class MPCAgent(AgentBase):
 
                 # loops over the below and then takes trajectories to resample ICEM if not initial
                 key, _key = jrandom.split(key)
-                init_traj_samples_BS1 = self._iCEM_generate_samples(_key,
-                                                           self.agent_config.BASE_NSAMPS,  # TODO have removed adaptive num_samples
-                                                           self.agent_config.PLANNING_HORIZON,
-                                                           self.agent_config.BETA,
-                                                           mean_S1,
-                                                           var_S1,
-                                                           self.env.action_space().low,
-                                                           self.env.action_space().high)
+                init_candidate_actions_BS1 = self._iCEM_generate_samples(_key,
+                                                                         self.agent_config.NUM_CANDIDATES,
+                                                                         # TODO have removed adaptive num_samples
+                                                                         self.agent_config.PLANNING_HORIZON,
+                                                                         mean_S1,
+                                                                         var_S1)
 
-                def _run_single_planning_horizon(init_samples_S1, key):
-                    def _run_planning_horizon(runner_state, actions_A):
+                def _run_single_sample_planning_horizon(init_samples_S1, key):
+                    def _run_single_timestep(runner_state, actions_A):
                         obs_O, key = runner_state
                         obsacts_OPA = jnp.concatenate((obs_O, actions_A))
                         key, _key = jrandom.split(key)
@@ -206,21 +208,23 @@ class MPCAgent(AgentBase):
                                                               action=actions_A,
                                                               reward=jnp.expand_dims(reward, axis=-1),
                                                               x=obsacts_OPA, y=data_y_O)
-                    return jax.lax.scan(_run_planning_horizon, (init_obs_O, key), init_samples_S1, self.agent_config.PLANNING_HORIZON)
 
-                init_traj_samples_BS1 = jnp.concatenate((init_traj_samples_BS1, init_shift_actions_BS1), axis=0)
+                    return jax.lax.scan(_run_single_timestep, (init_obs_O, key), init_samples_S1,
+                                        self.agent_config.PLANNING_HORIZON)
+
+                init_actions_BS1 = jnp.concatenate((init_candidate_actions_BS1, init_shift_actions_BS1), axis=0)
                 key, _key = jrandom.split(key)
-                batch_key = jrandom.split(_key, self.agent_config.BASE_NSAMPS + self.n_keep)
-                _, planning_traj_BSX = jax.vmap(_run_single_planning_horizon, in_axes=(0, 0))(init_traj_samples_BS1,
-                                                                                              batch_key)
+                batch_key = jrandom.split(_key, self.agent_config.NUM_CANDIDATES + self.n_keep)
+                _, planning_traj_BSX = jax.vmap(_run_single_sample_planning_horizon, in_axes=0)(init_actions_BS1,
+                                                                                                batch_key)
 
                 # need to concat this trajectory with previous ones in the loop ie best_traj so far
                 planning_traj_minus_xy_BSX = MPCTransition(obs=planning_traj_BSX.obs,
                                                            action=planning_traj_BSX.action,
                                                            reward=planning_traj_BSX.reward)
                 traj_combined_BSX = jax.tree_util.tree_map(lambda x, y: jnp.concatenate((x, y), axis=0),
-                                                       planning_traj_minus_xy_BSX,
-                                                       init_saved_traj_BSX)
+                                                           planning_traj_minus_xy_BSX,
+                                                           init_saved_traj_BSX)
 
                 # compute return on the entire training list
                 all_returns_B = self._compute_returns(jnp.squeeze(traj_combined_BSX.reward, axis=-1))
@@ -235,17 +239,16 @@ class MPCAgent(AgentBase):
                 # save the top n runs from this cycle
                 save_idx = elite_idx[-self.n_keep:]
                 end_traj_saved_BSX = jax.tree_util.tree_map(lambda x: x[save_idx, ...], traj_combined_BSX)
-                # TODO surely saved contains the best option as well right?
 
                 mpc_transition_BSX = MPCTransition(obs=end_traj_saved_BSX.obs,
-                                               action=end_traj_saved_BSX.action,
-                                               reward=end_traj_saved_BSX.reward)
+                                                   action=end_traj_saved_BSX.action,
+                                                   reward=end_traj_saved_BSX.reward)
 
                 mpc_transition_xy_BSX = MPCTransitionXY(obs=end_traj_saved_BSX.obs,
-                                                 action=end_traj_saved_BSX.action,
-                                                 reward=end_traj_saved_BSX.reward,
-                                                 x=planning_traj_BSX.x,
-                                                 y=planning_traj_BSX.y)
+                                                        action=end_traj_saved_BSX.action,
+                                                        reward=end_traj_saved_BSX.reward,
+                                                        x=planning_traj_BSX.x,
+                                                        y=planning_traj_BSX.y)
                 # TODO kinda dodge but it works, can we streamline?
 
                 return (mean_SA, var_SA, mpc_transition_BSX, key), mpc_transition_xy_BSX
@@ -364,34 +367,36 @@ class MPCAgent(AgentBase):
 
 def test_MPC_algorithm():
     from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward
-    # from project_name.util.control_util import ResettableEnv, get_f_mpc
     from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole
+    from project_name.envs.gymnax_pendulum import GymnaxPendulum
+    from project_name.envs.wrappers import NormalisedEnv, GenerativeEnv, make_normalised_plot_fn
+    from project_name import utils
 
     # env = CartPoleSwingUpEnv()
     # plan_env = ResettableEnv(CartPoleSwingUpEnv())
 
-    key = jrandom.PRNGKey(42)
-    key, _key = jrandom.split(key)
+    key = jrandom.key(42)
 
     # env, env_params = gymnax.make("MountainCarContinuous-v0")
 
-    env = GymnaxPilcoCartPole()
+    # env = GymnaxPilcoCartPole()
+    env = GymnaxPendulum()
     env_params = env.default_params
-    obs_dim = len(env.observation_space(env_params).low)
+    env = NormalisedEnv(env, env_params)
+    env = GenerativeEnv(env, env_params)
 
+    key, _key = jrandom.split(key)
     start_obs, env_state = env.reset(_key)
 
-    mpc = MPCAgent(env, env_params, get_config(), None, key)
     key, _key = jrandom.split(key)
+    mpc = MPCAgent(env, env_params, get_config(), key)
 
-    f = get_f_mpc
+    f = utils.get_f_mpc_teleport
 
     import time
     start_time = time.time()
 
-    # with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
-    with jax.disable_jit(disable=False):
-        path, (observations, actions, rewards), _ = mpc.run_algorithm_on_f(f, start_obs, _key,
+    path, (observations, actions, rewards), _ = mpc.run_algorithm_on_f(f, start_obs, None, _key,
                                                                         horizon=25,
                                                                         actions_per_plan=mpc.agent_config.ACTIONS_PER_PLAN)
     # batch_key = jrandom.split(_key, 25)
@@ -412,7 +417,7 @@ def test_MPC_algorithm():
         rewards.append(rew)
         if done:
             break
-    real_return = compute_return(rewards, 1.0)
+    real_return = mpc._compute_returns(jnp.array(rewards))
     print(f"based on the env it gets {real_return} return")
 
     print(time.time() - start_time)

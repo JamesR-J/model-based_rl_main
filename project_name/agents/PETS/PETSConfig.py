@@ -8,7 +8,7 @@ def get_PETS_config():
 
     config.INIT_VAR_DIVISOR = 4  # TODO what is this and where should it be?
 
-    config.BASE_NSAMPS = 25  # 30
+    config.NUM_CANDIDATES = 25  # 30
     config.GAMMA = 1.25  # This is something else not discount value
     config.DISCOUNT_FACTOR = 1.0
     config.N_ELITES = 3  # 6  # TODO check it works for diff numbers of this
