@@ -175,26 +175,21 @@ class MPCAgent(AgentBase):
 
     @partial(jax.jit, static_argnums=(0, 1, 5, 6))
     def run_algorithm_on_f(self, f, start_obs_O, train_state, key, horizon, actions_per_plan):
-        # TODO assumed const sample n for now
-        def _outer_loop(outer_loop_state, unused):
-            init_obs_O, init_mean_S1, init_var_S1, init_shift_actions_BS1, key = outer_loop_state
 
-            init_traj_BSX = MPCTransition(obs=jnp.zeros((self.n_keep, self.agent_config.PLANNING_HORIZON, self.obs_dim)),
-                                      action=jnp.zeros((self.n_keep, self.agent_config.PLANNING_HORIZON, self.action_dim)),
-                                      reward=jnp.ones((self.n_keep, self.agent_config.PLANNING_HORIZON, 1)) * -jnp.inf)
-            # TODO the above reward may need to be something better as it can cause issues
+        def _outer_loop(outer_loop_state, unused):
+            init_obs_O, init_mean_SA, init_var_S1, init_shift_actions_BSA, key = outer_loop_state
 
             def _iter_iCEM(iCEM_iter_state, unused):
-                mean_S1, var_S1, init_saved_traj_BSX, key = iCEM_iter_state
+                mean_SA, var_SA, key = iCEM_iter_state
 
                 # loops over the below and then takes trajectories to resample ICEM if not initial
                 key, _key = jrandom.split(key)
-                init_candidate_actions_BS1 = self._iCEM_generate_samples(_key,
+                init_candidate_actions_BSA = self._iCEM_generate_samples(_key,
                                                                          self.agent_config.NUM_CANDIDATES,
                                                                          # TODO have removed adaptive num_samples
                                                                          self.agent_config.PLANNING_HORIZON,
-                                                                         mean_S1,
-                                                                         var_S1)
+                                                                         mean_SA,
+                                                                         var_SA)
 
                 def _run_single_sample_planning_horizon(init_samples_S1, key):
                     def _run_single_timestep(runner_state, actions_A):
@@ -212,50 +207,34 @@ class MPCAgent(AgentBase):
                     return jax.lax.scan(_run_single_timestep, (init_obs_O, key), init_samples_S1,
                                         self.agent_config.PLANNING_HORIZON)
 
-                init_actions_BS1 = jnp.concatenate((init_candidate_actions_BS1, init_shift_actions_BS1), axis=0)
+                init_actions_BSA = jnp.concatenate((init_candidate_actions_BSA, init_shift_actions_BSA), axis=0)
                 key, _key = jrandom.split(key)
                 batch_key = jrandom.split(_key, self.agent_config.NUM_CANDIDATES + self.n_keep)
-                _, planning_traj_BSX = jax.vmap(_run_single_sample_planning_horizon, in_axes=0)(init_actions_BS1,
+                _, planning_traj_BSX = jax.vmap(_run_single_sample_planning_horizon, in_axes=0)(init_actions_BSA,
                                                                                                 batch_key)
 
-                # need to concat this trajectory with previous ones in the loop ie best_traj so far
-                planning_traj_minus_xy_BSX = MPCTransition(obs=planning_traj_BSX.obs,
-                                                           action=planning_traj_BSX.action,
-                                                           reward=planning_traj_BSX.reward)
-                traj_combined_BSX = jax.tree_util.tree_map(lambda x, y: jnp.concatenate((x, y), axis=0),
-                                                           planning_traj_minus_xy_BSX,
-                                                           init_saved_traj_BSX)
-
                 # compute return on the entire training list
-                all_returns_B = self._compute_returns(jnp.squeeze(traj_combined_BSX.reward, axis=-1))
+                all_returns_B = self._compute_returns(jnp.squeeze(planning_traj_BSX.reward, axis=-1))
 
                 # rank returns and chooses the top N_ELITES as the new mean and var
                 elite_idx = jnp.argsort(all_returns_B)[-self.agent_config.N_ELITES:]
-                elites_ISA = traj_combined_BSX.action[elite_idx]
+                elites_ISA = init_actions_BSA[elite_idx]
 
-                mean_SA = jnp.mean(elites_ISA, axis=0)
-                var_SA = jnp.var(elites_ISA, axis=0)
+                new_mean_SA = jnp.mean(elites_ISA, axis=0)
+                new_var_SA = jnp.var(elites_ISA, axis=0)
 
-                # save the top n runs from this cycle
-                save_idx = elite_idx[-self.n_keep:]
-                end_traj_saved_BSX = jax.tree_util.tree_map(lambda x: x[save_idx, ...], traj_combined_BSX)
-
-                mpc_transition_BSX = MPCTransition(obs=end_traj_saved_BSX.obs,
-                                                   action=end_traj_saved_BSX.action,
-                                                   reward=end_traj_saved_BSX.reward)
-
-                mpc_transition_xy_BSX = MPCTransitionXY(obs=end_traj_saved_BSX.obs,
-                                                        action=end_traj_saved_BSX.action,
-                                                        reward=end_traj_saved_BSX.reward,
+                mpc_transition_xy_BSX = MPCTransitionXY(obs=planning_traj_BSX.obs,
+                                                        action=planning_traj_BSX.action,
+                                                        reward=planning_traj_BSX.reward,
                                                         x=planning_traj_BSX.x,
                                                         y=planning_traj_BSX.y)
-                # TODO kinda dodge but it works, can we streamline?
 
-                return (mean_SA, var_SA, mpc_transition_BSX, key), mpc_transition_xy_BSX
+                return (new_mean_SA, new_var_SA, key), mpc_transition_xy_BSX
 
-            (_, _, _, key), iCEM_traj_RBSX = jax.lax.scan(_iter_iCEM,(init_mean_S1, init_var_S1, init_traj_BSX, key),
-                                                     None,
-                                                     self.agent_config.iCEM_ITERS)
+            (best_mean_SA, best_var_SA, key), iCEM_traj_RBSX = jax.lax.scan(_iter_iCEM,
+                                                                            (init_mean_SA, init_var_S1, key),
+                                                                            None,
+                                                                             self.agent_config.iCEM_ITERS)
 
             iCEM_traj_minus_xy_RBSX = MPCTransition(obs=iCEM_traj_RBSX.obs,
                                                action=iCEM_traj_RBSX.action,
@@ -284,11 +263,11 @@ class MPCAgent(AgentBase):
                                                    jnp.swapaxes(new_actions_batch_LBA, 0, 1)), axis=1)
 
             # remake the mean for iCEM
-            end_mean_S1 = jnp.concatenate((init_mean_S1[actions_per_plan:],
+            end_mean_SA = jnp.concatenate((best_mean_SA[actions_per_plan:],
                                         jnp.zeros((actions_per_plan, self.action_dim))))
-            end_var_S1 = (jnp.ones_like(end_mean_S1) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
+            end_var_SA = (jnp.ones_like(end_mean_SA) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
 
-            return (curr_obs_O, end_mean_S1, end_var_S1, shifted_actions_BSA, key), MPCTransitionXYR(obs=planned_iCEM_traj_LX.obs,
+            return (curr_obs_O, end_mean_SA, end_var_SA, shifted_actions_BSA, key), MPCTransitionXYR(obs=planned_iCEM_traj_LX.obs,
                                                                                             action=planned_iCEM_traj_LX.action,
                                                                                             reward=planned_iCEM_traj_LX.reward,
                                                                                             x=iCEM_traj_RBSX.x,
@@ -379,8 +358,8 @@ def test_MPC_algorithm():
 
     # env, env_params = gymnax.make("MountainCarContinuous-v0")
 
-    # env = GymnaxPilcoCartPole()
-    env = GymnaxPendulum()
+    env = GymnaxPilcoCartPole()
+    # env = GymnaxPendulum()
     env_params = env.default_params
     env = NormalisedEnv(env, env_params)
     env = GenerativeEnv(env, env_params)
