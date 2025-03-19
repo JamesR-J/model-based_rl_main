@@ -59,18 +59,18 @@ class TIPAgent(MPCAgent):
         def _iter_iCEM2(iCEM2_runner_state, unused):  # TODO perhaps we can generalise this from above
             mean_SA, var_SA, prev_samples, prev_returns, key = iCEM2_runner_state
             key, _key = jrandom.split(key)
-            samples_BS1 = self._iCEM_generate_samples(_key,
-                                                      self.agent_config.BASE_NSAMPS,
+            samples_BSA = self._iCEM_generate_samples(_key,
+                                                      self.agent_config.NUM_CANDIDATES,
                                                       self.agent_config.PLANNING_HORIZON,
                                                       mean_SA,
                                                       var_SA)
 
             key, _key = jrandom.split(key)
-            batch_key = jrandom.split(_key, self.agent_config.BASE_NSAMPS)
+            batch_key = jrandom.split(_key, self.agent_config.NUM_CANDIDATES)
             acq = jax.vmap(self._evaluate_samples, in_axes=(None, None, None, 0, None, 0))(train_state,
                                                                                            f,
                                                                                            curr_obs_O,
-                                                                                           samples_BS1,
+                                                                                           samples_BSA,
                                                                                            exe_path_BSOPA,
                                                                                            batch_key)
             # TODO ideally we could vmap f above using params
@@ -84,18 +84,18 @@ class TIPAgent(MPCAgent):
             returns_B = jnp.squeeze(acq, axis=-1)
 
             # do some subset thing that works with initial dummy data, can#t do a subset but giving it a shot
-            samples_concat_BP1S1 = jnp.concatenate((samples_BS1, prev_samples), axis=0)
+            samples_concat_BP1SA = jnp.concatenate((samples_BSA, prev_samples), axis=0)
             returns_concat_BP1 = jnp.concatenate((returns_B, prev_returns))
 
             # rank returns and chooses the top N_ELITES as the new mean and var
             elite_idx = jnp.argsort(returns_concat_BP1)[-self.agent_config.N_ELITES:]
-            elites_ISA = samples_concat_BP1S1[elite_idx, ...]
+            elites_ISA = samples_concat_BP1SA[elite_idx, ...]
             elite_returns_I = returns_concat_BP1[elite_idx]
 
             mean_SA = jnp.mean(elites_ISA, axis=0)
             var_SA = jnp.var(elites_ISA, axis=0)
 
-            return (mean_SA, var_SA, elites_ISA, elite_returns_I, key), (samples_concat_BP1S1, returns_concat_BP1)
+            return (mean_SA, var_SA, elites_ISA, elite_returns_I, key), (samples_concat_BP1SA, returns_concat_BP1)
 
         key, _key = jrandom.split(key)
         init_samples = jnp.zeros((self.agent_config.N_ELITES, self.agent_config.PLANNING_HORIZON, 1))
@@ -167,7 +167,7 @@ class TIPAgent(MPCAgent):
 
         # idea here is to run a batch of MPC on different posterior functions, can we sample a batch of params?
         # so that we can just call the GP on these params in a VMAPPED setting
-        _, exe_path_BSOPA = jax.vmap(self.execute_mpc, in_axes=(None, None, 0, 0, None, None))(
+        _, exe_path_BSOPA, _ = jax.vmap(self.execute_mpc, in_axes=(None, None, 0, 0, None, None))(
             self.make_postmean_func_const_key(),
             # self.make_postmean_func(),
             curr_obs,
@@ -190,62 +190,3 @@ class TIPAgent(MPCAgent):
         # TODO can we make this jittable?
 
         return x_next, exe_path_BSOPA, curr_obs, train_state, acq_val, key
-
-def test_MPC_algorithm():
-    from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward
-    # from project_name.util.control_util import ResettableEnv, get_f_mpc
-    from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole
-
-    # env = CartPoleSwingUpEnv()
-    # plan_env = ResettableEnv(CartPoleSwingUpEnv())
-
-    key = jrandom.PRNGKey(42)
-    key, _key = jrandom.split(key)
-
-    # env, env_params = gymnax.make("MountainCarContinuous-v0")
-
-    env = GymnaxPilcoCartPole()
-    env_params = env.default_params
-    obs_dim = len(env.observation_space(env_params).low)
-
-    start_obs, env_state = env.reset(_key)
-
-    mpc = MPCAgent(env, env_params, get_config(), None, key)
-    key, _key = jrandom.split(key)
-
-    f = get_f_mpc
-
-    import time
-    start_time = time.time()
-
-    # with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
-    with jax.disable_jit(disable=False):
-        path, (observations, actions, rewards), _ = mpc.run_algorithm_on_f(f, start_obs, _key,
-                                                                        horizon=25,
-                                                                        actions_per_plan=mpc.agent_config.ACTIONS_PER_PLAN)
-    # batch_key = jrandom.split(_key, 25)
-    # path, (observations, actions, rewards) = jax.vmap(mpc.run_algorithm_on_f, in_axes=(None, None, 0))(None, start_obs, batch_key)
-    # path, observations, actions, rewards = path[0], observations[0], actions[0], rewards[0]
-
-    print(time.time() - start_time)
-
-    total_return = jnp.sum(rewards)
-    print(f"MPC gets {total_return} return with {len(path[0])} queries based on itself")
-    done = False
-    rewards = []
-    for i, action in enumerate(actions):
-        next_obs, env_state, rew, done, info = env.step(key, env_state, action, env_params)
-        if (next_obs != observations[i+1]).any():
-            error = jnp.linalg.norm(next_obs - observations[i+1])
-            print(f"i={i}, error={error}")
-        rewards.append(rew)
-        if done:
-            break
-    real_return = compute_return(rewards, 1.0)
-    print(f"based on the env it gets {real_return} return")
-
-    print(time.time() - start_time)
-
-
-if __name__ == "__main__":
-    test_MPC_algorithm()

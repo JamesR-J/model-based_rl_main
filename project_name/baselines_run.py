@@ -129,7 +129,7 @@ def run_train(config):
                     def _env_step(env_runner_state, unused):
                         obs_O, env_state, key = env_runner_state
                         key, _key = jrandom.split(key)
-                        action_1A, _ = actor.execute_mpc(actor.make_postmean_func(), obs_O, train_state, _key, horizon=1, actions_per_plan=1)
+                        action_1A, _, _ = actor.execute_mpc(actor.make_postmean_func(), obs_O, train_state, _key, horizon=1, actions_per_plan=1)
                         action_A = jnp.squeeze(action_1A, axis=0)
                         key, _key = jrandom.split(key)
                         nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
@@ -188,8 +188,9 @@ def run_train(config):
             curr_obs_O = nobs_O
 
             # TODO somehow update the dataset that is used in the GP but also generally in the loop although so dodgy
-            train_state["train_data_x"] = data_x
-            train_state["train_data_y"] = data_y
+            # TODO how can we generalise this to the GP but also to the flax based approaches
+            # train_state["train_data_x"] = data_x
+            # train_state["train_data_y"] = data_y
 
     _main_loop(start_obs, init_data_x, init_data_y, train_state, start_env_state, key)
 

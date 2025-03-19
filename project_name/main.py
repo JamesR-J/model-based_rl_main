@@ -11,6 +11,8 @@ jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will
 
 # TODO focus on getting PETS to work
 
+# TODO add in the learnt reward function as well
+
 # TODO add in some hyperparm fit from initial data, OR some preloaded hyperparams, this a mare with the GPs but good learning
 # TODO can do GPs last and focus on the PETS pre fit if possible
 

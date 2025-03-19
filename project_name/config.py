@@ -21,8 +21,8 @@ def get_config():
 
     config.NUM_ITERS = 51#0
 
-    # config.WANDB = "disabled"
-    config.WANDB = "online"
+    config.WANDB = "disabled"
+    # config.WANDB = "online"
 
     config.DISABLE_JIT = False
     # config.DISABLE_JIT = True

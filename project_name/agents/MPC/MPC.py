@@ -53,7 +53,7 @@ class MPCAgent(AgentBase):
         else:
             self._update_fn = update_obs_fn
 
-    def create_train_state(self, init_data_x, init_data_y, key):  # TODO what would this be in the end?
+    def create_train_state(self, init_data_x, init_data_y, key):
         return self.dynamics_model.create_train_state(init_data_x, init_data_y, key)
 
     def pretrain_params(self, init_data_x, init_data_y, key):
@@ -301,24 +301,22 @@ class MPCAgent(AgentBase):
 
     @partial(jax.jit, static_argnums=(0,))
     def get_exe_path_crop(self, planned_states, planned_actions):
-        obs = planned_states[:-1]
-        nobs = planned_states[1:]
+        obs = planned_states[..., :-1, :]
+        nobs = planned_states[..., 1:, :]
         x = jnp.concatenate((obs, planned_actions), axis=-1)
-        y = nobs - obs
-
-        # TODO add some clip if it goes outside the domain and project to domain as well as terminal sorting out
+        y = nobs - obs  # TODO this may depend on what the algoirthm outputs, is it diff or is it nobs? Does it?
 
         return {"exe_path_x": x, "exe_path_y": y}
 
     @partial(jax.jit, static_argnums=(0, 1, 5, 6))
     def execute_mpc(self, f, obs, train_state, key, horizon, actions_per_plan):
-        full_path, output, _ = self.run_algorithm_on_f(f, obs, train_state, key, horizon, actions_per_plan)
+        full_path, output, sample_returns = self.run_algorithm_on_f(f, obs, train_state, key, horizon, actions_per_plan)
 
         action = output[1]
 
         exe_path = self.get_exe_path_crop(output[0], output[1])
 
-        return action, exe_path
+        return action, exe_path, output
 
     def make_postmean_func(self):
         def _postmean_fn(x, unused1, unused2, train_state, key):
@@ -335,7 +333,7 @@ class MPCAgent(AgentBase):
     # @partial(jax.jit, static_argnums=(0,))
     def get_next_point(self, curr_obs_O, train_state, key):
         key, _key = jrandom.split(key)
-        action_1A, exe_path = self.execute_mpc(self.make_postmean_func(), curr_obs_O, train_state, _key, horizon=1, actions_per_plan=1)
+        action_1A, exe_path, _ = self.execute_mpc(self.make_postmean_func(), curr_obs_O, train_state, _key, horizon=1, actions_per_plan=1)
         x_next_OPA = jnp.concatenate((curr_obs_O, jnp.squeeze(action_1A, axis=0)), axis=-1)
 
         exe_path = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=0), exe_path)
