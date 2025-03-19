@@ -344,7 +344,6 @@ class MPCAgent(AgentBase):
         return x_next_OPA, exe_path, curr_obs_O, train_state, None, key
 
 def test_MPC_algorithm():
-    from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward
     from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole
     from project_name.envs.gymnax_pendulum import GymnaxPendulum
     from project_name.envs.wrappers import NormalisedEnv, GenerativeEnv, make_normalised_plot_fn

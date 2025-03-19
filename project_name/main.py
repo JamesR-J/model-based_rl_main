@@ -6,7 +6,8 @@ import jax
 import logging
 
 
-jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
+jax.config.update("jax_enable_x64", True)
+
 
 # TODO focus on getting PETS to work
 
@@ -40,7 +41,7 @@ update_obs_fn literally just adds curr_obs + y_next to get the true nobs, and ad
 
 
 def main(_):
-    config = get_config()  # TODO dodge need to know how to fix this
+    config = get_config()
 
     # wandb.init(project="RL_BASE",
     #     entity=config.WANDB_ENTITY,

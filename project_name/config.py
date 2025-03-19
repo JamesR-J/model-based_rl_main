@@ -29,10 +29,10 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.ROLLOUT_SAMPLING = True  # TODO understand this, I think it only matters for MPC based things?
+    config.ROLLOUT_SAMPLING = True  # TODO it only matters for MPC based things?
 
-    # config.AGENT_TYPE = "MPC"
-    config.AGENT_TYPE = "TIP"
+    config.AGENT_TYPE = "MPC"
+    # config.AGENT_TYPE = "TIP"
     # config.AGENT_TYPE = "PETS"
 
     config.AGENT_CONFIG = {}
