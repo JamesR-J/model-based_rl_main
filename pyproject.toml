@@ -6,22 +6,26 @@ authors = [
     {name = "james_dell", email = "james.rudd.jones@gmail.com"},
 ]
 dependencies = [
-    "jax<0.4.28",
-    "wandb>=0.19.6",
-    "gymnasium>=1.0.0",
-    "absl-py>=2.1.0",
-    "ml-collections>=1.0.0",
-    "tqdm>=4.67.1",
-    "colorednoise>=2.2.0",
-    "matplotlib>=3.10.0",
-    "flax<0.10.0",
-    "gymnax>=0.0.8",
-    "chex>=0.1.89",
-    "tensorflow-probability>=0.22.1",
-    "multidispatch==0.2.0",
-    "neatplot>=0.1.0",
-    "gpjax==0.9.4",
+
 ]
+#dependencies = [
+#    "jax<0.4.28",
+#    "wandb>=0.19.6",
+#    "gymnasium>=1.0.0",
+#    "absl-py>=2.1.0",
+#    "ml-collections>=1.0.0",
+#    "tqdm>=4.67.1",
+#    "colorednoise>=2.2.0",
+#    "matplotlib>=3.10.0",
+#    "flax<0.10.0",
+#    "gymnax>=0.0.8",
+#    "chex>=0.1.89",
+#    "tensorflow-probability>=0.22.1",
+#    "multidispatch==0.2.0",
+#    "neatplot>=0.1.0",
+#    "gpjax==0.9.4",
+#]
+
 #dependencies = [  this stuff works so can rollback if needed
 #    "jax>=0.5.0",
 #    "wandb>=0.19.6",
@@ -43,7 +47,7 @@ requires-python = "==3.10.*"
 readme = "README.md"
 license = {text = "MIT"}
 
- [build-system]
+[build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
 
