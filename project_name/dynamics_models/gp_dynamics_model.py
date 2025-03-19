@@ -1,7 +1,6 @@
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-import gpjax
 from flax import struct
 from flax.training import train_state
 import optax
@@ -9,7 +8,7 @@ from typing import List, Tuple, Dict, Optional, NamedTuple, Any
 from functools import partial
 import GPJax_AScannell as gpjaxas
 import optax
-import gpjax
+# import gpjax
 from project_name.dynamics_models import DynamicsModelBase
 from GPJax_AScannell.gpjax.config import default_jitter
 

@@ -3,7 +3,6 @@ from project_name.baselines_run import run_train
 import wandb
 from project_name.config import get_config  # TODO dodge need to know how to fix this
 import jax
-from jax.lib import xla_bridge
 import logging
 
 
@@ -24,6 +23,7 @@ jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will
 # TODO replace the updating dataset with flashbax maybe? would this be more efficient or less?
 
 # TODO sort out this aidan scannall GPJax types, and also to make it work well, can we improve batch optimisation?
+# TODO also the whole multidispatch thing is a mess
 
 # env, env_params = gymnax.make("MountainCarContinuous-v0")
 # TODO make these envs in gymnax style for continuous control
@@ -40,7 +40,7 @@ update_obs_fn literally just adds curr_obs + y_next to get the true nobs, and ad
 
 
 def main(_):
-    config = get_config()
+    config = get_config()  # TODO dodge need to know how to fix this
 
     # wandb.init(project="RL_BASE",
     #     entity=config.WANDB_ENTITY,
@@ -50,7 +50,8 @@ def main(_):
     #     mode=config.WANDB
     # )
 
-    config.DEVICE = jax.lib.xla_bridge.get_backend().platform
+    # config.DEVICE = jax.lib.xla_bridge.get_backend().platform
+    config.DEVICE = jax.extend.backend.get_backend()
     logging.info(f"Current JAX Device: {config.DEVICE}")
 
     with jax.disable_jit(disable=config.DISABLE_JIT):

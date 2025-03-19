@@ -16,7 +16,6 @@ import jax.numpy as jnp
 from project_name.agents.TIP import get_TIP_config
 import jax
 from functools import partial
-import colorednoise
 import jax.random as jrandom
 from gymnax.environments import environment
 from flax import struct

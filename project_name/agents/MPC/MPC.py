@@ -16,7 +16,7 @@ import jax.numpy as jnp
 from project_name.agents.MPC import get_MPC_config
 import jax
 from functools import partial
-import colorednoise
+# import colorednoise
 import jax.random as jrandom
 from gymnax.environments import environment
 from flax import struct

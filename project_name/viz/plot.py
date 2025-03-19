@@ -2,7 +2,7 @@ from matplotlib import pyplot as plt
 from math import ceil
 import numpy as np
 from copy import deepcopy
-from project_name.envs.pilco_cartpole import get_pole_pos
+# from project_name.envs.pilco_cartpole import get_pole_pos
 import matplotlib.patches as patches
 
 
@@ -112,6 +112,16 @@ def plot(ax, x, shape, **kwargs):
             ax.plot(x[:, i * 2], x[:, i * 2 + 1], shape, **kwargs)
     except TypeError:
         ax.plot(x[:, 0], x[:, 1], shape, **kwargs)
+
+
+def get_pole_pos(x):
+    POLE_LENGTH = 0.6  # TODO need to sort this out
+    xpos = x[..., 0]
+    theta = x[..., 2]
+    pole_x = POLE_LENGTH * np.sin(theta)
+    pole_y = POLE_LENGTH * np.cos(theta)
+    position = np.array([xpos + pole_x, pole_y]).T
+    return position
 
 
 def plot_pilco_cartpole(path, ax=None, fig=None, domain=None, path_str="samp", env=None):

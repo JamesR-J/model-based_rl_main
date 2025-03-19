@@ -1,24 +1,24 @@
-import logging
-from gymnasium.envs.registration import register
-from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward
-from project_name.envs.wet_chicken import WetChicken, wet_chicken_reward
-
-
+# import logging
+# from gymnasium.envs.registration import register
+# from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward
+# from project_name.envs.wet_chicken import WetChicken, wet_chicken_reward
+#
+#
+# # register(
+# #     id="bacpendulum-v0",
+# #     entry_point=PendulumEnv,
+# # )
 # register(
-#     id="bacpendulum-v0",
-#     entry_point=PendulumEnv,
+#     id="pilcocartpole-v0",
+#     entry_point=CartPoleSwingUpEnv,
 # )
-register(
-    id="pilcocartpole-v0",
-    entry_point=CartPoleSwingUpEnv,
-)
-reward_functions = {
-    # "bacpendulum-v0": pendulum_reward,
-    "pilcocartpole-v0": pilco_cartpole_reward,
-}
-
-register(id="wetchicken-v0", entry_point=WetChicken)
-reward_functions["wetchicken-v0"] = wet_chicken_reward
+# reward_functions = {
+#     # "bacpendulum-v0": pendulum_reward,
+#     "pilcocartpole-v0": pilco_cartpole_reward,
+# }
+#
+# register(id="wetchicken-v0", entry_point=WetChicken)
+# reward_functions["wetchicken-v0"] = wet_chicken_reward
 
 # # mujoco stuff
 # try:

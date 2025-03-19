@@ -12,19 +12,19 @@ from GPJax_AScannell.gpjax.likelihoods import Likelihood
 from GPJax_AScannell.gpjax.mean_functions import MeanFunction, Zero
 from GPJax_AScannell.gpjax.utilities.ops import sample_mvn_diag, sample_mvn
 from GPJax_AScannell.gpjax.prediction import gp_predict_f
-import beartype.typing as tp
+# import beartype.typing as tp
 
-from cola.annotations import PSD
-from cola.linalg.algorithm_base import Algorithm
-from cola.linalg.decompositions.decompositions import Cholesky
-from cola.linalg.inverse.inv import solve
-from cola.ops.operators import I_like
+# from cola.annotations import PSD
+# from cola.linalg.algorithm_base import Algorithm
+# from cola.linalg.decompositions.decompositions import Cholesky
+# from cola.linalg.inverse.inv import solve
+# from cola.ops.operators import I_like
 
-from gpjax.kernels.base import AbstractKernel
-from gpjax.likelihoods import AbstractLikelihood, Gaussian, NonGaussian
-from gpjax.mean_functions import AbstractMeanFunction
-from gpjax.kernels import RFF
-from gpjax.typing import Array, FunctionalSample, KeyArray
+# from gpjax.kernels.base import AbstractKernel
+# from gpjax.likelihoods import AbstractLikelihood, Gaussian, NonGaussian
+# from gpjax.mean_functions import AbstractMeanFunction
+# from gpjax.kernels import RFF
+# from gpjax.typing import Array, FunctionalSample, KeyArray
 # from jaxtyping import FLoat
 from flax import nnx
 from typing import Union

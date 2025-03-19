@@ -1,7 +1,6 @@
 import jax.numpy as jnp
 import jax
 import jax.random as jrandom
-from project_name.config import get_config  # TODO dodge need to know how to fix this
 import wandb
 from typing import NamedTuple
 import chex
@@ -10,16 +9,13 @@ from project_name.envs.wrappers import NormalisedEnv, GenerativeEnv, make_normal
 from project_name.utils import Transition, EvalTransition, PlotTuple, RealPath
 from project_name import utils
 import sys
-import gymnasium as gym
-from project_name import envs
+# from project_name import envs
 import logging
-from project_name import dynamics_models
 from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole  # TODO add some register thing here instead
 from project_name.envs.gymnax_pendulum import GymnaxPendulum  # TODO add some register thing here instead
 from functools import partial
 import time
 from project_name.viz import plotters, plot
-import numpy as np
 import neatplot
 
 
@@ -189,8 +185,9 @@ def run_train(config):
 
             # TODO somehow update the dataset that is used in the GP but also generally in the loop although so dodgy
             # TODO how can we generalise this to the GP but also to the flax based approaches
-            # train_state["train_data_x"] = data_x
-            # train_state["train_data_y"] = data_y
+            if config.AGENT_TYPE != "PETS":
+                train_state["train_data_x"] = data_x
+                train_state["train_data_y"] = data_y
 
     _main_loop(start_obs, init_data_x, init_data_y, train_state, start_env_state, key)
 

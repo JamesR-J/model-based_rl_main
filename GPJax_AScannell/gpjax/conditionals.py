@@ -4,7 +4,8 @@ from typing import Optional, Union
 import jax
 from jax import numpy as jnp
 from jax import scipy as jsp
-from multidispatch import multifunction
+# from multidispatch import multifunction
+from GPJax_AScannell.gpjax.multidispatch import multifunction
 # from tensor_annotations import jax as tjax
 
 from GPJax_AScannell.gpjax.config import default_jitter
