@@ -9,6 +9,8 @@ import logging
 jax.config.update("jax_enable_x64", True)
 
 
+# TODO set a precedent for when we split keys, it should be at the lowest level possible before use
+
 # TODO focus on getting PETS to work
 
 # TODO add in the learnt reward function as well
@@ -52,8 +54,8 @@ def main(_):
     # )
 
     # config.DEVICE = jax.lib.xla_bridge.get_backend().platform
-    config.DEVICE = jax.extend.backend.get_backend()
-    logging.info(f"Current JAX Device: {config.DEVICE}")
+    # # config.DEVICE = jax.extend.backend.get_backend()
+    # logging.info(f"Current JAX Device: {config.DEVICE}")
 
     with jax.disable_jit(disable=config.DISABLE_JIT):
         train = run_train(config)

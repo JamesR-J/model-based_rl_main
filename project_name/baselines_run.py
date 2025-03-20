@@ -59,18 +59,21 @@ def run_train(config):
     # get some initial data for hyperparam tuning, unsure what else as of now? also a test set
     key, _key = jrandom.split(key)
     init_data_x, init_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
-                                                      _key, train=True)
+                                                      config.NUM_INIT_DATA, _key, train=True)
     key, _key = jrandom.split(key)
     test_data_x, test_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
-                                                      _key)
-    if config.PRETRAIN_HYPERPARAMS:
-        key, _key = jrandom.split(key)
-        train_state = actor.pretrain_params(init_data_x, init_data_y, _key)
+                                                      config.NUM_INIT_DATA, _key)
 
     key, _key = jrandom.split(key)
-    train_state = actor.create_train_state(init_data_x, init_data_y, _key)
-    # TODO kinda dodge but adds some random obs to the GP dataset as otherwise have an empty params that would not work I think?
-    # TODO also this initial data does not match the env.reset obs
+    if config.PRETRAIN_HYPERPARAMS:
+        pretrain_data_x, pretrain_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env,
+                                                                  env_params,
+                                                                  config.PRETRAIN_NUM_DATA, _key)
+        key, _key = jrandom.split(key)
+        train_state = actor.pretrain_params(init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, _key)
+    else:
+        train_state = actor.create_train_state(init_data_x, init_data_y, _key)
+        # TODO how does the above work if there is no data, can we use the start obs and a randoma action or nothing?
 
     @partial(jax.jit, static_argnums=(1,))
     def execute_gt_mpc(init_obs, f, key):

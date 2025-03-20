@@ -211,6 +211,6 @@ class GPR(GPModel):
 
             return p
 
-        log_prob = tf_multivariate_normal(y, mx, Lm)
+        log_prob = jax.vmap(tf_multivariate_normal, in_axes=(None, None, 0))(y, mx, Lm)
 
-        return jnp.sum(log_prob)
+        return jnp.sum(log_prob)  # jnp.sum(log_prob, axis=-1)

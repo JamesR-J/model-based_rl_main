@@ -165,16 +165,16 @@ def get_start_obs(env, env_params, key):  # TODO some if statement if have some 
     return obs, env_state
 
 
-def get_initial_data(config, f, plot_fn, low, high, domain, env, env_params, key, train=False):
+def get_initial_data(config, f, plot_fn, low, high, domain, env, env_params, n, key, train=False):
     def unif_random_sample_domain(low, high, key, n=1):
         unscaled_random_sample = jrandom.uniform(key, shape=(n, low.shape[0]))
         scaled_random_sample = low + (high - low) * unscaled_random_sample
         return scaled_random_sample
 
-    data_x_LOPA = unif_random_sample_domain(low, high, key, n=config.NUM_INIT_DATA)
+    data_x_LOPA = unif_random_sample_domain(low, high, key, n)
     data_x_L1OPA = jnp.expand_dims(data_x_LOPA, axis=1)  # TODO kinda a dodgy fix
     if config.GENERATIVE_ENV:
-        batch_key = jrandom.split(key, config.NUM_INIT_DATA)
+        batch_key = jrandom.split(key, n)
         data_y_LO = jax.vmap(f, in_axes=(0, None, None, None, 0))(data_x_L1OPA, env, env_params, None, batch_key)
     else:
         raise NotImplementedError("If not generative env then we have to output nothing, unsure how to do in Jax")

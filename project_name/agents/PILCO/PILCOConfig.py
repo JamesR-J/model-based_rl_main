@@ -22,6 +22,8 @@ def get_PILCO_config():
     config.ACQUISITION_SAMPLES = 15
     config.OPTIMISATION_ITERS = 5  # TODO think this shoud be diff from config.iCEM_ITERS but should check
 
+    config.LR = 1e-3
+
     """
     Current iCEM adaptions
     Use constant batch size
