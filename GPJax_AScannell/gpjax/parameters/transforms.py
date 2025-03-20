@@ -23,6 +23,7 @@ def build_constrain_params(transforms: dict) -> Callable:
                 return param
 
         return jax.tree_util.tree_map(transform_param, params, transforms)
+        return jax.tree.map(lambda x, y: None if x is None else f(x, y), a, b, is_leaf=lambda x: x is None)
 
     return constrain_params
 
