@@ -7,14 +7,11 @@ authors = [
 ]
 dependencies = [
     "absl-py>=2.1.0",
-    "flax<=0.10.0",
     "ml-collections>=1.0.0",
     "wandb>=0.19.8",
     "matplotlib>=3.10.1",
     "neatplot>=0.1.0",
     "gymnax>=0.0.8",
-    "tensorflow-probability>=0.25.0",
-    "jaxtyping>=0.3.0",
     "gpjax>=0.9.4",
 ]
 
