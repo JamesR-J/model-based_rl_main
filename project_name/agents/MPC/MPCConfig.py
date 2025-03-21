@@ -25,6 +25,7 @@ def get_MPC_config():
     config.PRETRAIN_RESTARTS = 5
     config.PRETRAIN_GP_NUM_ITERS = 10#0#0
     config.GP_LR = 0.01
+    config.NUM_INDUCING_POINTS = 100
 
     """
     Current iCEM adaptions

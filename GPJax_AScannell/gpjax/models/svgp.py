@@ -170,19 +170,12 @@ class SVGP(GPModel):
         marginal likelihood of the model.
         """
 
-        def elbo(
-            params: dict,
-            data: Tuple[Array, Array],
-        ):
+        def elbo(params: dict, data: Tuple[Array, Array]):
             X, Y = data
             params = constrain_params(params)
             kl = self.prior_kl(params)
-            f_mean, f_var = self.predict_f(
-                params, X, full_cov=False, full_output_cov=False
-            )
-            var_exp = self.likelihood.variational_expectations(
-                params["likelihood"], f_mean, f_var, Y
-            )
+            f_mean, f_var = self.predict_f(params, X, full_cov=False, full_output_cov=False)
+            var_exp = self.likelihood.variational_expectations(params["likelihood"], f_mean, f_var, Y)
             # print("var_exp")
             # print(var_exp.shape)
             var_exp_sum = jnp.sum(var_exp)

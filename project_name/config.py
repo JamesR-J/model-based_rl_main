@@ -12,7 +12,7 @@ def get_config():
     config.TELEPORT = True  # aka teleporting in the original thing
     config.PRETRAIN_HYPERPARAMS = True
     config.PRETRAIN_NUM_DATA = 1000
-    config.NUM_INIT_DATA = 1#000
+    config.NUM_INIT_DATA = 160#000
 
     config.SAVE_FIGURES = True
 

@@ -51,8 +51,9 @@ class PILCOAgent(MPCAgent):
         self.agent_config = get_PILCO_config()
 
         # TODO add some import from folder check thingo
-        # self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
-        self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
+        self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
+        # self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
+        # self.dynamics_model = dynamics_models.MOSVGP(env, env_params, config, self.agent_config, key)
 
         self.obs_dim = len(self.env.observation_space(self.env_params).low)
         self.action_dim = self.env.action_space().shape[0]
@@ -90,7 +91,7 @@ class PILCOAgent(MPCAgent):
         train_state = self.create_train_state(init_data_x, init_data_y, key)
 
         # optimisation for the dynamics model
-        opt_posterior = self.dynamics_model.optimise_gp(init_data_x, init_data_y, key)
+        opt_posterior = self.dynamics_model.pretrain_params(init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key)
         train_state["posterior"] = opt_posterior
 
         # controller optimisation

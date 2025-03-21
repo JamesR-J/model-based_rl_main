@@ -216,7 +216,7 @@ class GPR(GPModel):
 
         return jnp.sum(log_prob)  # jnp.sum(log_prob, axis=-1)
 
-    def multi_output_log_marginal_likelihood(self, params, data, idx):
+    def multi_output_log_marginal_likelihood(self, params, data):
         x, y = data
         Kmm = self.kernel.kernels[0](params["kernel"], x, x) + jnp.eye(x.shape[-2], dtype=x.dtype) * default_jitter()  # [..., M, M]
         # TODO a dodgy fix that assumes the kernels are the same for each dimension
