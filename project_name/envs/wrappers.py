@@ -25,7 +25,7 @@ class NormalisedEnv(environment.Environment):
         Normalises obs to be between -1 and 1
         """
         self._wrapped_env = wrapped_env
-        self.unnorm_action_space = self._wrapped_env.action_space()
+        self.unnorm_action_space = self._wrapped_env.action_space(env_params)
         self.unnorm_observation_space = self._wrapped_env.observation_space(env_params)
         self.unnorm_obs_space_size = self.unnorm_observation_space.high - self.unnorm_observation_space.low
         self.unnorm_action_space_size = self.unnorm_action_space.high - self.unnorm_action_space.low
@@ -162,9 +162,9 @@ def make_normalised_plot_fn(norm_env, env_params, plot_fn):
     wrapped_env = norm_env.wrapped_env
     # Set domain
     low = np.concatenate([wrapped_env.observation_space(env_params).low,
-                          np.expand_dims(np.array(wrapped_env.action_space().low), axis=0)])
+                          np.expand_dims(np.array(wrapped_env.action_space(env_params).low), axis=0)])
     high = np.concatenate([wrapped_env.observation_space(env_params).high,
-                           np.expand_dims(np.array(wrapped_env.action_space().high), axis=0)])
+                           np.expand_dims(np.array(wrapped_env.action_space(env_params).high), axis=0)])
     unnorm_domain = [elt for elt in zip(low, high)]
 
     def norm_plot_fn(path, ax=None, fig=None, domain=None, path_str="samp", env=None):

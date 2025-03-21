@@ -101,12 +101,11 @@ class GymnaxPendulum(environment.Environment[EnvState, EnvParams]):
     @property
     def num_actions(self) -> int:
         """Number of actions possible in environment."""
-        return 2
+        return 1
 
     def action_space(self, params: Optional[EnvParams] = None) -> spaces.Box:
         """Action space of the environment."""
-        # return spaces.Box(-params.max_torque, params.max_torque, shape=(1,))
-        return spaces.Box(-2, 2, shape=(1,))  # TODO being lazy, this should be params as above
+        return spaces.Box(-params.max_torque, params.max_torque, shape=(1,))
 
     def observation_space(self, params: EnvParams) -> spaces.Box:
         """Observation space of the environment."""

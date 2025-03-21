@@ -22,6 +22,10 @@ def get_MPC_config():
     config.ACQUISITION_SAMPLES = 15
     config.OPTIMISATION_ITERS = 5  # TODO think this shoud be diff from config.iCEM_ITERS but should check
 
+    config.PRETRAIN_RESTARTS = 5
+    config.PRETRAIN_GP_NUM_ITERS = 10#0#0
+    config.GP_LR = 0.01
+
     """
     Current iCEM adaptions
     Use constant batch size

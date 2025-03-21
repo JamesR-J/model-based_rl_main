@@ -51,6 +51,7 @@ class PILCOAgent(MPCAgent):
         self.agent_config = get_PILCO_config()
 
         # TODO add some import from folder check thingo
+        # self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
         self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
 
         self.obs_dim = len(self.env.observation_space(self.env_params).low)
@@ -84,7 +85,7 @@ class PILCOAgent(MPCAgent):
 
         return dynamics_train_state
 
-    def pretrain_params(self, init_data_x, init_data_y, key):
+    def pretrain_params(self, init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key):
         # create train_state
         train_state = self.create_train_state(init_data_x, init_data_y, key)
 
@@ -117,6 +118,8 @@ class PILCOAgent(MPCAgent):
                     M_dx, S_dx, C_dx = self.dynamics_model.predict_on_noisy_inputs(m, s, train_state)
                     M_x = M_dx + m_x
                     S_x = S_dx + s_x + s1 @ C_dx + C_dx.T @ s1.T
+
+                    return M_x, S_x
 
                 return *_propogate(m_x, s_x), jnp.add(reward, jnp.squeeze(self.reward.compute_reward(m_x, s_x)[0]))
 

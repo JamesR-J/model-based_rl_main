@@ -85,9 +85,19 @@ class MOGPGPJax(DynamicsModelBase):
         kernel = SeparateIndependent()
         self.prior = gpjax.gps.Prior(mean_function=mean, kernel=kernel)
 
+        key, _key = jrandom.split(key)
+        samples = jrandom.uniform(key, shape=(self.agent_config.NUM_INDUCING_POINTS, self.obs_dim + self.action_dim), minval=0.0, maxval=1.0)
+        low = jnp.concatenate([env.observation_space(env_params).low,
+                               jnp.expand_dims(jnp.array(env.action_space(env_params).low), axis=0)])
+        high = jnp.concatenate([env.observation_space(env_params).high,
+                                jnp.expand_dims(jnp.array(env.action_space(env_params).high), axis=0)])
+        # TODO this is general maybe can put somehwere else
+        self.z = low + (high - low) * samples
+
     def create_train_state(self, init_data_x, init_data_y, key):
         params = {}
         params["data"] = self._adjust_dataset(init_data_x, init_data_y)
+        params["inducing_points"] = self.z
         return params
 
     @staticmethod
@@ -114,10 +124,13 @@ class MOGPGPJax(DynamicsModelBase):
         data = self._adjust_dataset(x, y)
         likelihood = gpjax.likelihoods.Gaussian(num_datapoints=data.n, obs_stddev=Static(jnp.array(1e-6)))
         posterior = self.prior * likelihood
-        opt_posterior, _ = gpjax.fit(model=posterior,
-                                     objective=lambda p, d: -gpjax.objectives.conjugate_mll(p, d),
+        q = gpjax.variational_families.VariationalGaussian(posterior, self.z)
+
+        # TODO do we add a scheduling lr?
+        opt_posterior, _ = gpjax.fit(model=q,
+                                     objective=lambda p, d: -gpjax.objectives.elbo(p, d),
                                      train_data=data,
-                                     optim=optax.adam(learning_rate=0.01),
+                                     optim=optax.adam(learning_rate=self.agent_config.GP_LR),
                                      num_iters=1000,
                                      safe=True,
                                      key=_key,
@@ -125,7 +138,7 @@ class MOGPGPJax(DynamicsModelBase):
 
         return opt_posterior
 
-    def predict_on_noisy_inputs(self, m, s, params):
+    def predict_on_noisy_inputs(self, m, s, params):   # TODO Idk if even nee this
         data = params["data"]  # self._adjust_dataset(params["train_data_x"], params["train_data_y"])
 
         # turns dataset of data_points, num_features into data_points * num_outputs, num_features + (num_outputs - 1)
@@ -133,6 +146,7 @@ class MOGPGPJax(DynamicsModelBase):
 
         likelihood = gpjax.likelihoods.Gaussian(num_datapoints=data.n, obs_stddev=Static(jnp.array(1e-6)))
         posterior = self.prior * likelihood
+        q = gpjax.variational_families.VariationalGaussian(posterior, params["inducing_points"])
 
         # XNew3D = self._adjust_dataset(XNew, jnp.zeros((XNew.shape[0], 2)))  # TODO separate this to be just X aswell
 
@@ -177,10 +191,7 @@ class MOGPGPJax(DynamicsModelBase):
             V = (jnp.transpose(tiL, axes=(0, 2, 1)) @ lb[:, :, None])[..., 0] * c[:, None]
 
             # Calculate S: Predictive Covariance
-            z = objax.Vectorize(
-                objax.Vectorize(lambda x: jnp.diag(x, k=0), objax.VarCollection()),
-                objax.VarCollection(),
-            )(
+            z = objax.Vectorize(objax.Vectorize(lambda x: jnp.diag(x, k=0), objax.VarCollection()), objax.VarCollection())(
                 1.0 / jnp.square(self.lengthscales[None, :, :])
                 + 1.0 / jnp.square(self.lengthscales[:, None, :])
             )
@@ -213,7 +224,7 @@ class MOGPGPJax(DynamicsModelBase):
 
             return jnp.transpose(M), S, jnp.transpose(V)
 
-        iK, beta = calculate_factorisations(posterior, data)
+        iK, beta = calculate_factorisations(q, data)
         yeyo = predict_given_factorizations(new_data.X, s, data_x - m, iK, beta, data)
 
     def get_post_mu_cov(self, XNew, params, full_cov=False):  # TODO if no data then return the prior mu and var
@@ -224,10 +235,11 @@ class MOGPGPJax(DynamicsModelBase):
 
         likelihood = gpjax.likelihoods.Gaussian(num_datapoints=data.n, obs_stddev=Static(jnp.array(1e-6)))
         posterior = self.prior * likelihood
+        q = gpjax.variational_families.VariationalGaussian(posterior, self.z)
 
         XNew3D = self._adjust_dataset(XNew, jnp.zeros((XNew.shape[0], 2)))  # TODO separate this to be just X aswell
 
-        latent_dist = posterior.predict(XNew3D.X, data)
+        latent_dist = q.predict(XNew3D.X, data)
         mu = latent_dist.mean()  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
         std = latent_dist.stddev()
 
@@ -237,14 +249,15 @@ class MOGPGPJax(DynamicsModelBase):
         return mu, std
 
     def get_post_mu_full_cov(self, XNew, params, full_cov=False):  # TODO if no data then return the prior mu and var
-        data = gpx.Dataset(X=params["train_data_x"], y=params["train_data_y"])
+        data = gpjax.Dataset(X=params["train_data_x"], y=params["train_data_y"])
         data = self.adjust_dataset(params["train_data_x"], params["train_data_y"])
 
         # turns dataset of data_points, num_features into data_points * num_outputs, num_features + (num_outputs - 1)
         # TODO generalise the above thing to make it actually work with n number of outputs
 
-        likelihood = gpx.likelihoods.Gaussian(num_datapoints=data.n, obs_stddev=Static(jnp.array(1e-6)))
+        likelihood = gpjax.likelihoods.Gaussian(num_datapoints=data.n, obs_stddev=Static(jnp.array(1e-6)))
         posterior = self.prior_gpjax * likelihood
+        q = gpjax.variational_families.VariationalGaussian(posterior, self.z)
 
         XNew3D = self.adjust_dataset(XNew, jnp.zeros((XNew.shape[0], 2)))  # TODO separate this to be just X aswell
 
@@ -258,13 +271,13 @@ class MOGPGPJax(DynamicsModelBase):
         return mu, cov
 
     def get_post_mu_cov_samples(self, XNew, params, key, full_cov=False):
-        data = gpx.Dataset(X=params["train_data_x"], y=params["train_data_y"])
+        data = gpjax.Dataset(X=params["train_data_x"], y=params["train_data_y"])
         data = self.adjust_dataset(params["train_data_x"], params["train_data_y"])
 
         # turns dataset of data_points, num_features into data_points * num_outputs, num_features + (num_outputs - 1)
         # TODO generalise the above thing to make it actually work with n number of outputs
 
-        likelihood = gpx.likelihoods.Gaussian(num_datapoints=data.n, obs_stddev=Static(jnp.array(1e-6)))
+        likelihood = gpjax.likelihoods.Gaussian(num_datapoints=data.n, obs_stddev=Static(jnp.array(1e-6)))
         posterior = self.prior_gpjax * likelihood
 
         XNew3D = self.adjust_dataset(XNew, jnp.zeros((XNew.shape[0], 2)))  # TODO separate this to be just X aswell

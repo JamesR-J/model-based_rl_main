@@ -25,7 +25,7 @@ def run_train(config):
     # env = GymnaxPilcoCartPole()
     env = GymnaxPendulum()
     env_params = env.default_params
-    action_dim = env.action_space().shape[0]  # TODO is there a better way to write this?
+    action_dim = env.action_space(env_params).shape[0]  # TODO is there a better way to write this?
 
     # add plot functionality as required
     plot_fn = partial(plotters[config.ENV_NAME], env=env)  # TODO sort this out

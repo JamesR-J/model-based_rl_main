@@ -32,8 +32,8 @@ def get_config():
 
     config.ROLLOUT_SAMPLING = True  # TODO it only matters for MPC based things?
 
-    config.AGENT_TYPE = "MPC"
-    # config.AGENT_TYPE = "PILCO"
+    # config.AGENT_TYPE = "MPC"
+    config.AGENT_TYPE = "PILCO"
     # config.AGENT_TYPE = "TIP"
     # config.AGENT_TYPE = "PETS"
 

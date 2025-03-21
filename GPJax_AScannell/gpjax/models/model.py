@@ -211,6 +211,41 @@ class GPR(GPModel):
 
             return p
 
-        log_prob = jax.vmap(tf_multivariate_normal, in_axes=(None, None, 0))(y, mx, Lm)
+        # log_prob = jax.vmap(tf_multivariate_normal, in_axes=(None, None, 0))(y, mx, Lm)
+        log_prob = tf_multivariate_normal(y, mx, Lm)
 
         return jnp.sum(log_prob)  # jnp.sum(log_prob, axis=-1)
+
+    def multi_output_log_marginal_likelihood(self, params, data, idx):
+        x, y = data
+        Kmm = self.kernel.kernels[0](params["kernel"], x, x) + jnp.eye(x.shape[-2], dtype=x.dtype) * default_jitter()  # [..., M, M]
+        # TODO a dodgy fix that assumes the kernels are the same for each dimension
+        Kmm += jnp.eye(x.shape[-2], dtype=x.dtype) * params["likelihood"]["variance"]
+        Lm = jsp.linalg.cholesky(Kmm, lower=True)
+        mx = self.mean_function(params["mean_function"], x)
+
+        # TODO added in below which is a dodgy fix that only works if mean function is zero
+        mx = jnp.expand_dims(mx[:, 0], axis=-1)
+
+        def tf_multivariate_normal(x, mu, L):
+            """
+            Computes the log-density of a multivariate normal.
+
+            :param x: sample(s) for which we want the density
+            :param mu: mean(s) of the normal distribution
+            :param L: Cholesky decomposition of the covariance matrix
+            :return: log densities
+            """
+
+            d = x - mu
+            alpha = jsp.linalg.solve_triangular(L, d, lower=True)
+            num_dims = d.shape[0]
+            p = -0.5 * jnp.sum(jnp.square(alpha), axis=0)
+            p -= 0.5 * num_dims * jnp.log(2 * jnp.pi)
+            p -= jnp.sum(jnp.log(jnp.diagonal(L)))
+
+            return p
+
+        log_prob = tf_multivariate_normal(y, mx, Lm)
+
+        return jnp.sum(log_prob)

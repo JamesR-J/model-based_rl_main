@@ -23,8 +23,6 @@ class MOGP(DynamicsModelBase):
         #      [1063051.24, 1135236.37, 1239430.67, 25.09, 1176016.11], [331.70, 373.98, 0.32, 1.88, 39.83]], dtype=jnp.float64)
         self.ls = jnp.array([[2.27, 7.73, 138.94], [0.84, 288.15, 11.05]],
                        dtype=jnp.float64)
-        self.ls = jnp.array([[10.0, 10.0, 10.0], [10.0, 10.0, 10.0]],
-                       dtype=jnp.float64)
         alpha = jnp.array([0.26, 2.32, 11.59, 3.01], dtype=jnp.float64)  # TODO what is alpha? is this periodic?
         self.sigma = 0.01
 
@@ -39,32 +37,45 @@ class MOGP(DynamicsModelBase):
         params["train_data_y"] = init_data_y
         return params
 
-    def pretrain_params(self, init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key):
-        # train on the data and update the ls and sigma etc for the rest
-        params = self.gp.get_params()
-        transforms = self.gp.get_transforms()  # TODO do we need this for a gp idk?
+    def optimise(self, data_x, data_y, params):
+        transforms = self.gp.get_transforms()
         constrain_params = gpjaxas.parameters.build_constrain_params(transforms)
         params = constrain_params(params)
 
-        # TODO this is currently not working since we have multiple dimensions, that is the curr issues am running into
-        # TODO can we vmap this or is there a better way to go around this?
-        objective = lambda p, d: -self.gp.log_marginal_likelihood(p, d)
-        num_iters = 100  # 1000
-        learning_rate = 0.01
+        def create_sep_params(params):
+            kernels = params["kernel"]
+            lengthscales = jnp.stack([k['lengthscales'] for k in kernels])
+            variances = jnp.expand_dims(jnp.stack([k['variance'] for k in kernels]), axis=-1)
+            likelihood_variances = jnp.tile(params["likelihood"]["variance"], (self.obs_dim, 1))
 
-        def optimise_single_gp(params):
-            # Create optimiser
-            tx = optax.adam(learning_rate)
-            opt_state = tx.init(params)
+            params["kernel"] = {"lengthscales": lengthscales, "variance": variances}
+            params["likelihood"] = {"variance": likelihood_variances}
 
-            # Mini-batch random keys to scan over.
-            iter_keys = jrandom.split(key, num_iters)
+            return params
 
-            train_data = (pretrain_data_x, pretrain_data_y)
+        def create_sep_transform(params):
+            params["kernel"] = {"lengthscales": params["kernel"][0]["lengthscales"],
+                                "variance": params["kernel"][0]["variance"]}
+            return params
+
+        sep_params = create_sep_params(params)
+        sep_transforms = create_sep_transform(transforms)
+        sep_constrain_params = gpjaxas.parameters.build_constrain_params(sep_transforms)
+        sep_params = sep_constrain_params(sep_params)
+
+        objective = lambda p, d: -self.gp.multi_output_log_marginal_likelihood(p, d)
+        tx = optax.adam(self.agent_config.GP_LR)
+
+        def optimise_single_gp(data_x, data_y, ind_params, idx):
+            # Create optimiser state
+            opt_state = tx.init(ind_params)
+
+            train_data = (data_x, jnp.expand_dims(data_y, axis=-1))
 
             # Optimisation step.
-            def step(carry, unused):
+            def _step_fn(carry, unused):
                 params, opt_state = carry
+                params = sep_constrain_params(params)
 
                 loss_val, loss_gradient = jax.value_and_grad(objective)(params, train_data)
                 updates, opt_state = tx.update(loss_gradient, opt_state, params)
@@ -74,14 +85,47 @@ class MOGP(DynamicsModelBase):
                 return carry, loss_val
 
             # Optimisation loop.
-            (params, _), history = jax.lax.scan(step, (params, opt_state), None, num_iters)
+            (ind_params, _), history = jax.lax.scan(jax.jit(_step_fn), (ind_params, opt_state), None, self.agent_config.PRETRAIN_GP_NUM_ITERS)
 
-            return params
+            return ind_params, history
 
-        all_params = optimise_single_gp(params)
+        indices = jnp.linspace(0, 1, 2, dtype=jnp.int64)
+        all_params, loss_vals = jax.vmap(optimise_single_gp, in_axes=(None, 1, 0, 0))(data_x, data_y, sep_params, indices)
 
-        # recreate a train_state if fitting params
-        return self.create_train_state(init_data_x, init_data_y, key)
+        return all_params, loss_vals
+
+    def pretrain_params(self, init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key):
+        params = self.create_train_state(init_data_x, init_data_y, key)
+        key, _key = jrandom.split(key)
+        lengthscales = jrandom.uniform(_key, minval=0.0, maxval=100, shape=(self.agent_config.PRETRAIN_RESTARTS, self.obs_dim, self.obs_dim + self.action_dim))
+        # key, _key = jrandom.split(key)
+        # alphas = jrandom.uniform(_key, minval=1.0, maxval=20.0, shape=(self.agent_config.PRETRAIN_RESTARTS, self.obs_dim, 1))
+
+        def _batch_gp_training(data_x, data_y, params, lengthscales):
+            kernel = gpjaxas.kernels.SeparateIndependent(
+                [gpjaxas.kernels.SquaredExponential(lengthscales=lengthscales[idx], variance=self.sigma) for idx in
+                 range(self.obs_dim)])
+            # TODO a dodgy fix for now
+            kernel_params = kernel.get_params()
+
+            params["kernel"] = kernel_params
+
+            return self.optimise(data_x, data_y, params)
+
+        new_params, loss_vals = jax.vmap(_batch_gp_training, in_axes=(None, None, None, 0))(pretrain_data_x, pretrain_data_y, params, lengthscales)
+        last_loss_vals = loss_vals[:, :, -1]
+        best_idx = jnp.argmin(last_loss_vals, axis=0)
+        n_indices = jnp.arange(last_loss_vals.shape[1])
+        best_params = jax.tree_util.tree_map(lambda x: x[best_idx, n_indices, ...], new_params)
+        kernel = gpjaxas.kernels.SeparateIndependent(
+            [gpjaxas.kernels.SquaredExponential(lengthscales=best_params["kernel"]["lengthscales"][idx], variance=best_params["kernel"]["variance"][idx]) for idx in
+             range(self.obs_dim)])
+        # TODO again a dodgy fix for now
+
+        kernel_params = kernel.get_params()
+        params["kernel"] = kernel_params
+
+        return params
 
     def get_post_mu_cov(self, XNew, params, full_cov=False):  # TODO if no data then return the prior mu and var
         mu, std = self.gp.predict_f(params, XNew, full_cov=full_cov)
@@ -90,3 +134,89 @@ class MOGP(DynamicsModelBase):
     def get_post_mu_cov_samples(self, XNew, params, key, full_cov=False):
         samples = self.gp.predict_f_samples(params, key, XNew, num_samples=1, full_cov=full_cov)
         return samples[0] # TODO works on the first sample as only one required for now
+
+    def predict_on_noisy_inputs(self, m, s, train_state):
+        iK, beta = self.calculate_factorizations()
+        return self.predict_given_factorizations(m, s, iK, beta)
+
+    def calculate_factorizations(self):
+        K = self.K(self.X, self.X)
+        batched_eye = jnp.expand_dims(jnp.eye(jnp.shape(self.X)[0]), axis=0).repeat(
+            self.num_outputs, axis=0
+        )
+        L = jsp.linalg.cho_factor(
+            K + self.noise[:, None, None] * batched_eye, lower=True
+        )
+        iK = jsp.linalg.cho_solve(L, batched_eye)
+        Y_ = jnp.transpose(self.Y)[:, :, None]
+        beta = jsp.linalg.cho_solve(L, Y_)[:, :, 0]
+        return iK, beta
+
+    def predict_given_factorizations(self, m, s, iK, beta):
+        """
+        Approximate GP regression at noisy inputs via moment matching
+        IN: mean (m) (row vector) and (s) variance of the state
+        OUT: mean (M) (row vector), variance (S) of the action
+             and inv(s)*input-ouputcovariance
+        """
+
+        s = jnp.tile(s[None, None, :, :], [self.num_outputs, self.num_outputs, 1, 1])
+        inp = jnp.tile(self.centralized_input(m)[None, :, :], [self.num_outputs, 1, 1])
+
+        # Calculate M and V: mean and inv(s) times input-output covariance
+        iL = objax.Vectorize(lambda x: jnp.diag(x, k=0), objax.VarCollection())(
+            1 / self.lengthscales
+        )
+        iN = inp @ iL
+        B = iL @ s[0, ...] @ iL + jnp.eye(self.num_dims)
+
+        # Redefine iN as in^T and t --> t^T
+        # B is symmetric so its the same
+        t = jnp.transpose(
+            jnp.linalg.solve(B, jnp.transpose(iN, axes=(0, 2, 1))),
+            axes=(0, 2, 1),
+        )
+
+        lb = jnp.exp(-0.5 * jnp.sum(iN * t, -1)) * beta
+        tiL = t @ iL
+        c = self.variance / jnp.sqrt(jnp.linalg.det(B))
+
+        M = (jnp.sum(lb, -1) * c)[:, None]
+        V = (jnp.transpose(tiL, axes=(0, 2, 1)) @ lb[:, :, None])[..., 0] * c[:, None]
+
+        # Calculate S: Predictive Covariance
+        z = objax.Vectorize(
+            objax.Vectorize(lambda x: jnp.diag(x, k=0), objax.VarCollection()),
+            objax.VarCollection(),
+        )(
+            1.0 / jnp.square(self.lengthscales[None, :, :])
+            + 1.0 / jnp.square(self.lengthscales[:, None, :])
+        )
+
+        R = (s @ z) + jnp.eye(self.num_dims)
+
+        X = inp[None, :, :, :] / jnp.square(self.lengthscales[:, None, None, :])
+        X2 = -inp[:, None, :, :] / jnp.square(self.lengthscales[None, :, None, :])
+        Q = 0.5 * jnp.linalg.solve(R, s)
+        maha = (X - X2) @ Q @ jnp.transpose(X - X2, axes=(0, 1, 3, 2))
+
+        k = jnp.log(self.variance)[:, None] - 0.5 * jnp.sum(jnp.square(iN), -1)
+        L = jnp.exp(k[:, None, :, None] + k[None, :, None, :] + maha)
+        S = (
+            jnp.tile(beta[:, None, None, :], [1, self.num_outputs, 1, 1])
+            @ L
+            @ jnp.tile(beta[None, :, :, None], [self.num_outputs, 1, 1, 1])
+        )[:, :, 0, 0]
+
+        diagL = jnp.transpose(
+            objax.Vectorize(
+                objax.Vectorize(lambda x: jnp.diag(x, k=0), objax.VarCollection()),
+                objax.VarCollection(),
+            )(jnp.transpose(L))
+        )
+        S = S - jnp.diag(jnp.sum(jnp.multiply(iK, diagL), [1, 2]))
+        S = S / jnp.sqrt(jnp.linalg.det(R))
+        S = S + jnp.diag(self.variance)
+        S = S - M @ jnp.transpose(M)
+
+        return jnp.transpose(M), S, jnp.transpose(V)

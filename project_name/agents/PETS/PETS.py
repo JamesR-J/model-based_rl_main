@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from project_name.agents.PETS import get_PETS_config
 import jax
 from functools import partial
-import colorednoise
+# import colorednoise
 import jax.random as jrandom
 from gymnax.environments import environment
 from flax import struct
@@ -40,14 +40,14 @@ class PETSAgent(MPCAgent):
     def create_train_state(self, init_data_x, init_data_y, key):
         return self.dynamics_model.create_train_state(init_data_x, init_data_y, key)
 
-    def pretrain_params(self, init_data_x, init_data_y, key):
+    def pretrain_params(self, init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key):
         # add some batch data call for each iteration of the loop
 
         train_state = self.create_train_state(init_data_x, init_data_y, key)
 
         def update_fn(update_state, unused):
-            batch_x = jnp.reshape(init_data_x, (self.agent_config.NUM_ENSEMBLE, -1, init_data_x.shape[-1]))
-            batch_y = jnp.reshape(init_data_y, (self.agent_config.NUM_ENSEMBLE, -1, init_data_y.shape[-1]))
+            batch_x = jnp.reshape(pretrain_data_x, (self.agent_config.NUM_ENSEMBLE, -1, pretrain_data_x.shape[-1]))
+            batch_y = jnp.reshape(pretrain_data_y, (self.agent_config.NUM_ENSEMBLE, -1, pretrain_data_y.shape[-1]))
             # TODO is the above needed for speedups?
             loss, new_update_state = self.dynamics_model.update(batch_x, batch_y, update_state)
             return new_update_state, loss
