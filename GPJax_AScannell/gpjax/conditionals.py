@@ -4,6 +4,8 @@ from typing import Optional, Union
 import jax
 from jax import numpy as jnp
 from jax import scipy as jsp
+
+from GPJax_AScannell.gpjax.likelihoods import Likelihood
 # from multidispatch import multifunction
 from GPJax_AScannell.gpjax.multidispatch import multifunction
 # from tensor_annotations import jax as tjax
@@ -14,8 +16,9 @@ from jaxtyping import Array
 from GPJax_AScannell.gpjax.kernels import Kernel, MultioutputKernel, SeparateIndependent
 
 
-@multifunction(None, None, None, Kernel)
+@multifunction(None, None, None, None, Kernel)
 def conditional(kernel_params: dict,
+                likelihood_params: dict,
                 Xnew: Array,
                 X: Array,
                 # inducing_variable: InducingVariable,
@@ -31,6 +34,7 @@ def conditional(kernel_params: dict,
     Multidispatch handles changing implementation for multioutput etc
     """
     f_mean, f_cov = single_output_conditional(kernel_params,
+                                              likelihood_params,
                                               Xnew,
                                               # inducing_variable,
                                               X,
@@ -42,7 +46,7 @@ def conditional(kernel_params: dict,
     return f_mean, f_cov
 
 
-@multifunction(None, None, None, Kernel)
+@multifunction(None, None, None, None, Kernel)
 def _conditional(kernel_params: dict,
                 xnew: Array,
                 X: Array,
@@ -72,6 +76,7 @@ def _conditional(kernel_params: dict,
 
 
 def single_output_conditional(kernel_params: dict,
+                              likelihood_params: dict,
                               Xnew: Array,
                               X: Array,
                               # inducing_variable: InducingVariable,
@@ -83,6 +88,8 @@ def single_output_conditional(kernel_params: dict,
                               white: Optional[bool] = False) -> MeanAndCovariance:
     """Single-output GP conditional."""
     Kmm = (kernel(kernel_params, X, X) + jnp.eye(X.shape[-2], dtype=X.dtype) * default_jitter())  # [..., M, M]
+    # Kmm = Kmm + jnp.eye(X.shape[-2], dtype=X.dtype) * 1.0  # [..., M, M]
+    Kmm = Kmm + jnp.eye(X.shape[-2], dtype=X.dtype) * likelihood_params["variance"]  # [..., M, M]
     Kmn = kernel(kernel_params, X, Xnew)  # [M, N]
     Knn = kernel(kernel_params, Xnew, full_cov=full_cov)  # [N, N]
 

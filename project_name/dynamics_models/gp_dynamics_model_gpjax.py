@@ -119,6 +119,11 @@ class MOGPGPJax(DynamicsModelBase):
         # takes in dimension (number of data points, num features)
         return dataset_3d(jnp.swapaxes(x, 0, 1), jnp.swapaxes(y, 0, 1))
 
+    def pretrain_params(self, init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key):
+        opt_posterior = self.optimise_gp(pretrain_data_x, pretrain_data_y, key)
+
+        return opt_posterior
+
     def optimise_gp(self, x, y, key):
         key, _key = jrandom.split(key)
         data = self._adjust_dataset(x, y)

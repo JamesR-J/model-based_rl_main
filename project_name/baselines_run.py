@@ -17,6 +17,7 @@ from functools import partial
 import time
 from project_name.viz import plotters, plot
 import neatplot
+import gpjax
 
 
 def run_train(config):
@@ -60,6 +61,7 @@ def run_train(config):
     key, _key = jrandom.split(key)
     init_data_x, init_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
                                                       config.NUM_INIT_DATA, _key, train=True)
+    init_dataset = gpjax.Dataset(init_data_x, init_data_y)
     key, _key = jrandom.split(key)
     test_data_x, test_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
                                                       config.NUM_INIT_DATA, _key)
@@ -78,7 +80,7 @@ def run_train(config):
     @partial(jax.jit, static_argnums=(1,))
     def execute_gt_mpc(init_obs, f, key):
         key, _key = jrandom.split(key)
-        full_path, test_mpc_data, all_returns = actor.run_algorithm_on_f(f, init_obs, train_state, key,
+        full_path, test_mpc_data, all_returns = actor.run_algorithm_on_f(f, init_obs, train_state, init_dataset, key,
                                                                   horizon=env_params.horizon,
                                                                   actions_per_plan=actor.agent_config.ACTIONS_PER_PLAN)
         path_lengths = len(full_path[0])  # TODO should we turn the output into a dict for x and y ?
@@ -111,16 +113,19 @@ def run_train(config):
         neatplot.save_figure("figures/gt", "png", fig=fig_gt)
 
     # this runs the main loop of learning
-    def _main_loop(curr_obs_O, data_x, data_y, train_state, env_state, key):
+    def _main_loop(curr_obs_O, train_data, train_state, env_state, key):
         for i in range(config.NUM_ITERS):
             # log some info that we need basically
             logging.info("---" * 5 + f" Start iteration i={i} " + "---" * 5)
-            logging.info(f"Length of data.x: {len(data_x)}; Length of data.y: {len(data_y)}")
+            logging.info(f"Length of data.x: {len(train_data.X)}; Length of data.y: {len(train_data.y)}")
 
             # TODO some if statement if our input data does not exist as not using generative approach, i.e. the first step
 
             # get next point
-            x_next_OPA, exe_path, curr_obs_O, train_state, acq_val, key = actor.get_next_point(curr_obs_O, train_state, key)
+            x_next_OPA, exe_path, curr_obs_O, train_state, acq_val, key = actor.get_next_point(curr_obs_O,
+                                                                                               train_state,
+                                                                                               train_data,
+                                                                                               key)
 
             # periodically run evaluation and plot
             if i % config.EVAL_FREQ == 0 or i + 1 == config.NUM_ITERS:
@@ -160,7 +165,7 @@ def run_train(config):
 
                 utils.make_plots(plot_fn, domain,
                                  PlotTuple(x=true_paths["exe_path_x"][-1], y=true_paths["exe_path_y"][-1]),
-                                 PlotTuple(x=data_x, y=data_y),
+                                 PlotTuple(x=train_data.X, y=train_data.y),
                                  env, env_params, config, exe_path, real_paths_mpc, x_next_OPA, i)
 
             # Query function, update data
@@ -180,18 +185,11 @@ def run_train(config):
                 y_next_O = nobs_O - curr_obs_O
             # the above should match
 
-            data_x = jnp.concatenate((data_x, jnp.expand_dims(x_next_OPA, axis=0)))
-            data_y = jnp.concatenate((data_y, jnp.expand_dims(y_next_O, axis=0)))
-
+            train_data = train_data + gpjax.Dataset(X=jnp.expand_dims(x_next_OPA, axis=0), y=jnp.expand_dims(y_next_O, axis=0))
+            # TODO will this work with PETS as well?
             env_state = new_env_state
             curr_obs_O = nobs_O
 
-            # TODO somehow update the dataset that is used in the GP but also generally in the loop although so dodgy
-            # TODO how can we generalise this to the GP but also to the flax based approaches
-            if config.AGENT_TYPE != "PETS":
-                train_state["train_data_x"] = data_x
-                train_state["train_data_y"] = data_y
-
-    _main_loop(start_obs, init_data_x, init_data_y, train_state, start_env_state, key)
+    _main_loop(start_obs, init_dataset, train_state, start_env_state, key)
 
     return

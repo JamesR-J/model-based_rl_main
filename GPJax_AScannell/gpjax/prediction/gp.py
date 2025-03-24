@@ -11,6 +11,7 @@ from GPJax_AScannell.gpjax.custom_types import (
     OutputData,
 )
 from GPJax_AScannell.gpjax.kernels import Kernel
+from GPJax_AScannell.gpjax.likelihoods import Likelihood
 
 from GPJax_AScannell.gpjax.mean_functions import MeanFunction
 from jax import numpy as jnp
@@ -28,7 +29,7 @@ def gp_predict_f(params: dict,
                  full_output_cov: Optional[bool] = False,
                  q_sqrt: Optional = None,
                  whiten: Optional[bool] = False) -> MeanAndCovariance:
-    mean, cov = conditional(params["kernel"], Xnew, X, kernel, f=f, full_cov=full_cov, full_output_cov=full_output_cov,
+    mean, cov = conditional(params["kernel"], params["likelihood"], Xnew, X, kernel, f=f, full_cov=full_cov, full_output_cov=full_output_cov,
                             q_sqrt=q_sqrt, white=whiten)
     return mean + mean_function(params["mean_function"], Xnew), cov
 

@@ -15,6 +15,8 @@ dependencies = [
     "gpjax>=0.9.4",
     "jax[cuda12_pip]<0.4.20",  # TODO this is due to some weird segmentation errors caused by jax 0.4.27???????
     "scipy<=1.12.0,>=1.6.0",  # for the low jax package
+    "jupyter>=1.1.1",
+    "notebook>=7.3.3",
 ]
 
 #dependencies = [

@@ -40,8 +40,9 @@ class MPCAgent(AgentBase):
         self.agent_config = get_MPC_config()
 
         # TODO add some import from folder check thingo
-        # self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
-        self.dynamics_model = dynamics_models.MOSVGP(env, env_params, config, self.agent_config, key)
+        self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
+        # self.dynamics_model = dynamics_models.MOSVGP(env, env_params, config, self.agent_config, key)
+        # self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
 
         self.obs_dim = len(self.env.observation_space(self.env_params).low)
         self.action_dim = self.env.action_space().shape[0]
@@ -174,8 +175,8 @@ class MPCAgent(AgentBase):
         # TODO compare against old np.polynomial.polynomial.polyval(discount_factor, rewards)
         return jnp.polyval(rewards.T, self.agent_config.DISCOUNT_FACTOR)  # TODO check discount factor does not change
 
-    @partial(jax.jit, static_argnums=(0, 1, 5, 6))
-    def run_algorithm_on_f(self, f, start_obs_O, train_state, key, horizon, actions_per_plan):
+    @partial(jax.jit, static_argnums=(0, 1, 6, 7))
+    def run_algorithm_on_f(self, f, start_obs_O, train_state, train_data, key, horizon, actions_per_plan):
 
         def _outer_loop(outer_loop_state, unused):
             init_obs_O, init_mean_SA, init_var_S1, init_shift_actions_BSA, key = outer_loop_state
@@ -196,7 +197,7 @@ class MPCAgent(AgentBase):
                         obs_O, key = runner_state
                         obsacts_OPA = jnp.concatenate((obs_O, actions_A))
                         key, _key = jrandom.split(key)
-                        data_y_O = f(jnp.expand_dims(obsacts_OPA, axis=0), self.env, self.env_params, train_state, _key)
+                        data_y_O = f(jnp.expand_dims(obsacts_OPA, axis=0), self.env, self.env_params, train_state, train_data, _key)
                         nobs_O = self._update_fn(obsacts_OPA, data_y_O, self.env, self.env_params)
                         reward = self.env.reward_function(obsacts_OPA, nobs_O, self.env_params)
                         return (nobs_O, key), MPCTransitionXY(obs=nobs_O,
@@ -309,9 +310,9 @@ class MPCAgent(AgentBase):
 
         return {"exe_path_x": x, "exe_path_y": y}
 
-    @partial(jax.jit, static_argnums=(0, 1, 5, 6))
-    def execute_mpc(self, f, obs, train_state, key, horizon, actions_per_plan):
-        full_path, output, sample_returns = self.run_algorithm_on_f(f, obs, train_state, key, horizon, actions_per_plan)
+    @partial(jax.jit, static_argnums=(0, 1, 6, 7))
+    def execute_mpc(self, f, obs, train_state, train_data, key, horizon, actions_per_plan):
+        full_path, output, sample_returns = self.run_algorithm_on_f(f, obs, train_state, train_data, key, horizon, actions_per_plan)
 
         action = output[1]
 
@@ -320,21 +321,21 @@ class MPCAgent(AgentBase):
         return action, exe_path, output
 
     def make_postmean_func(self):
-        def _postmean_fn(x, unused1, unused2, train_state, key):
-            mu, std = self.dynamics_model.get_post_mu_cov(x, train_state, full_cov=False)
+        def _postmean_fn(x, unused1, unused2, train_state, train_data, key):
+            mu, std = self.dynamics_model.get_post_mu_cov(x, train_state, train_data, full_cov=False)
             return jnp.squeeze(mu, axis=0)
         return _postmean_fn
 
     def make_postmean_func2(self):
-        def _postmean_fn(x, unused1, unused2, train_state, key):
-            mu, std = self.dynamics_model.get_post_mu_cov(x, train_state, full_cov=False)
+        def _postmean_fn(x, unused1, unused2, train_state, train_data, key):
+            mu, std = self.dynamics_model.get_post_mu_cov(x, train_state, train_data, full_cov=False)
             return mu
         return _postmean_fn
 
     # @partial(jax.jit, static_argnums=(0,))
-    def get_next_point(self, curr_obs_O, train_state, key):
+    def get_next_point(self, curr_obs_O, train_state, train_data, key):
         key, _key = jrandom.split(key)
-        action_1A, exe_path, _ = self.execute_mpc(self.make_postmean_func(), curr_obs_O, train_state, _key, horizon=1, actions_per_plan=1)
+        action_1A, exe_path, _ = self.execute_mpc(self.make_postmean_func(), curr_obs_O, train_state, train_data, _key, horizon=1, actions_per_plan=1)
         x_next_OPA = jnp.concatenate((curr_obs_O, jnp.squeeze(action_1A, axis=0)), axis=-1)
 
         exe_path = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=0), exe_path)

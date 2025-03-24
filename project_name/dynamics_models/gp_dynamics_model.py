@@ -1,3 +1,4 @@
+import gpjax
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -18,8 +19,6 @@ import jax.scipy as jsp
 class MOGP(DynamicsModelBase):
     def __init__(self, env, env_params, config, agent_config, key):
         super().__init__(env, env_params, config, agent_config, key)
-        num_latent_gps = self.obs_dim
-
         # TODO ls below is for cartpole
         # ls = jnp.array([[80430.37, 4.40, 116218.45, 108521.27, 103427.47], [290.01, 318.22, 0.39, 1.57, 33.17],
         #      [1063051.24, 1135236.37, 1239430.67, 25.09, 1176016.11], [331.70, 373.98, 0.32, 1.88, 39.83]], dtype=jnp.float64)
@@ -31,18 +30,17 @@ class MOGP(DynamicsModelBase):
         self.kernel = gpjaxas.kernels.SeparateIndependent([gpjaxas.kernels.SquaredExponential(lengthscales=self.ls[idx], variance=self.sigma) for idx in range(self.obs_dim)])
         self.likelihood = gpjaxas.likelihoods.Gaussian(variance=3.0)
         self.mean_function = gpjaxas.mean_functions.Zero(output_dim=self.obs_dim)  # it was action_dim
-        self.gp = gpjaxas.models.GPR(self.kernel, self.likelihood, self.mean_function, num_latent_gps=num_latent_gps)
+        self.gp = gpjaxas.models.GPR(self.kernel, self.likelihood, self.mean_function, num_latent_gps=self.obs_dim)
 
     def create_train_state(self, init_data_x, init_data_y, key):
         params = self.gp.get_params()
-        params["train_data_x"] = init_data_x
-        params["train_data_y"] = init_data_y
         return params
 
-    def optimise(self, data_x, data_y, params):
-        transforms = self.gp.get_transforms()
-        constrain_params = gpjaxas.parameters.build_constrain_params(transforms)
-        params = constrain_params(params)
+    @partial(jax.jit, static_argnums=(0,))
+    def optimise(self, train_data, params):
+        # transforms = self.gp.get_transforms()
+        # constrain_params = gpjaxas.parameters.build_constrain_params(transforms)
+        # params = constrain_params(params)
 
         def create_sep_params(params):
             kernels = params["kernel"]
@@ -61,9 +59,9 @@ class MOGP(DynamicsModelBase):
             return params
 
         sep_params = create_sep_params(params)
-        sep_transforms = create_sep_transform(transforms)
-        sep_constrain_params = gpjaxas.parameters.build_constrain_params(sep_transforms)
-        sep_params = sep_constrain_params(sep_params)
+        # sep_transforms = create_sep_transform(transforms)
+        # sep_constrain_params = gpjaxas.parameters.build_constrain_params(sep_transforms)
+        # sep_params = sep_constrain_params(sep_params)
 
         objective = lambda p, d: -self.gp.multi_output_log_marginal_likelihood(p, d)
         tx = optax.adam(self.agent_config.GP_LR)
@@ -71,13 +69,12 @@ class MOGP(DynamicsModelBase):
         def optimise_single_gp(data_x, data_y, ind_params, idx):
             # Create optimiser state
             opt_state = tx.init(ind_params)
-
-            train_data = (data_x, jnp.expand_dims(data_y, axis=-1))
+            train_data = gpjax.Dataset(data_x, jnp.expand_dims(data_y, axis=-1))
 
             # Optimisation step.
             def _step_fn(carry, unused):
                 params, opt_state = carry
-                params = sep_constrain_params(params)
+                # params = sep_constrain_params(params)
 
                 loss_val, loss_gradient = jax.value_and_grad(objective)(params, train_data)
                 updates, opt_state = tx.update(loss_gradient, opt_state, params)
@@ -92,7 +89,7 @@ class MOGP(DynamicsModelBase):
             return ind_params, history
 
         indices = jnp.linspace(0, 1, 2, dtype=jnp.int64)
-        all_params, loss_vals = jax.vmap(optimise_single_gp, in_axes=(None, 1, 0, 0))(data_x, data_y, sep_params, indices)
+        all_params, loss_vals = jax.vmap(optimise_single_gp, in_axes=(None, 1, 0, 0))(train_data.X, train_data.y, sep_params, indices)
 
         return all_params, loss_vals
 
@@ -112,7 +109,9 @@ class MOGP(DynamicsModelBase):
 
             new_params = {"kernel": kernel_params, "likelihood": params["likelihood"], "mean_function": params["mean_function"]}
 
-            return self.optimise(data_x, data_y, new_params)
+            train_data = gpjax.Dataset(data_x, data_y)
+
+            return self.optimise(train_data, new_params)
 
         new_params, loss_vals = jax.vmap(_batch_gp_training, in_axes=(None, None, None, 0))(pretrain_data_x, pretrain_data_y, params, lengthscales)
         last_loss_vals = loss_vals[:, :, -1]
@@ -128,19 +127,19 @@ class MOGP(DynamicsModelBase):
 
         return params
 
-    def get_post_mu_cov(self, XNew, params, full_cov=False):  # TODO if no data then return the prior mu and var
-        mu, std = self.gp.predict_f(params, XNew, full_cov=full_cov)
+    def get_post_mu_cov(self, XNew, params, train_data, full_cov=False):  # TODO if no data then return the prior mu and var
+        mu, std = self.gp.predict_f(params, XNew, train_data, full_cov=full_cov)
         return mu, std
 
-    def get_post_mu_cov_samples(self, XNew, params, key, full_cov=False):
-        samples = self.gp.predict_f_samples(params, key, XNew, num_samples=1, full_cov=full_cov)
+    def get_post_mu_cov_samples(self, XNew, params, train_data, key, full_cov=False):
+        samples = self.gp.predict_f_samples(params, key, XNew, train_data, num_samples=1, full_cov=full_cov)
         return samples[0] # TODO works on the first sample as only one required for now
 
-    def predict_on_noisy_inputs(self, m, s, train_state):
+    def predict_on_noisy_inputs(self, m, s, train_state, train_data):
         iK, beta = self.calculate_factorizations(train_state)
         return self.predict_given_factorizations(m, s, iK, beta, train_state)
 
-    def calculate_factorizations(self, train_state):
+    def calculate_factorizations(self, train_state, train_data):
         X = train_state["train_data_x"]
         Y = train_state["train_data_y"]
         Kmm = self.gp.kernel(train_state["kernel"], X, X) # [..., M, M]

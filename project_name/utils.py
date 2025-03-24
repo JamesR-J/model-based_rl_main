@@ -122,7 +122,7 @@ def import_class_from_folder(folder_name):
 
 
 @partial(jax.jit, static_argnums=(1, 2))
-def get_f_mpc(x_OPA, env, env_params, train_state, key):
+def get_f_mpc(x_OPA, env, env_params, train_state, train_data, key):
     obs_1O = x_OPA[..., :env.obs_dim]
     action_1A = x_OPA[..., env.obs_dim:]
     obs_O = jnp.squeeze(obs_1O, axis=0)
@@ -130,7 +130,7 @@ def get_f_mpc(x_OPA, env, env_params, train_state, key):
     return nobs_O - obs_O
 
 @partial(jax.jit, static_argnums=(1, 2))
-def get_f_mpc_teleport(x_OPA, env, env_params, train_state, key):
+def get_f_mpc_teleport(x_OPA, env, env_params, train_state, train_data, key):
     obs_1O = x_OPA[..., :env.obs_dim]
     action_1A = x_OPA[..., env.obs_dim:]
     obs_O = jnp.squeeze(obs_1O, axis=0)
@@ -175,7 +175,7 @@ def get_initial_data(config, f, plot_fn, low, high, domain, env, env_params, n, 
     data_x_L1OPA = jnp.expand_dims(data_x_LOPA, axis=1)  # TODO kinda a dodgy fix
     if config.GENERATIVE_ENV:
         batch_key = jrandom.split(key, n)
-        data_y_LO = jax.vmap(f, in_axes=(0, None, None, None, 0))(data_x_L1OPA, env, env_params, None, batch_key)
+        data_y_LO = jax.vmap(f, in_axes=(0, None, None, None, None, 0))(data_x_L1OPA, env, env_params, None, None, batch_key)
     else:
         raise NotImplementedError("If not generative env then we have to output nothing, unsure how to do in Jax")
 

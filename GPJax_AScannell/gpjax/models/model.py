@@ -30,6 +30,7 @@ from flax import nnx
 from typing import Union
 from jax import scipy as jsp
 from GPJax_AScannell.gpjax.config import default_jitter
+from functools import partial
 
 
 jax.config.update("jax_enable_x64", True)
@@ -56,6 +57,7 @@ class GPModel(Module, abc.ABC):
     def predict_f(self,
                   params: dict,
                   Xnew: InputData,
+                  train_data: Optional[InputData] = None,
                   full_cov: bool = False,
                   full_output_cov: bool = False) -> MeanAndCovariance:
         """Compute mean and (co)variance of latent function at Xnew.
@@ -80,6 +82,7 @@ class GPModel(Module, abc.ABC):
                           params: dict,
                           key,
                           Xnew: InputData,
+                          train_data: Optional[InputData] = None,
                           num_samples: int = 1,
                           full_cov: bool = False,
                           full_output_cov: bool = False) -> MeanAndCovariance:
@@ -112,6 +115,7 @@ class GPModel(Module, abc.ABC):
     def predict_y(self,
                   params: dict,
                   Xnew: InputData,
+                  train_data: Optional[InputData] = None,
                   full_cov: bool = False,
                   full_output_cov: bool = False) -> MeanAndCovariance:
         """Compute the mean and (co)variance of function at Xnew."""
@@ -120,7 +124,7 @@ class GPModel(Module, abc.ABC):
                 "The predict_y method currently supports only the argument values full_cov=False and full_output_cov=False"
             )
 
-        f_mean, f_cov = self.predict_f(params, Xnew, full_cov=full_cov, full_output_cov=full_output_cov)
+        f_mean, f_cov = self.predict_f(params, Xnew, train_data, full_cov=full_cov, full_output_cov=full_output_cov)
         return self.likelihood.predict_mean_and_var(params["likelihood"], f_mean, f_cov)
 
 
@@ -160,7 +164,7 @@ class GPR(GPModel):
     def predict_f(self,
                   params: dict,
                   Xnew: InputData,
-                  # train_data: Optional[InputData] = None,
+                  train_data: Optional[InputData] = None,
                   full_cov: bool = False,
                   full_output_cov: bool = False) -> MeanAndCovariance:
         """Compute mean and (co)variance of latent function at Xnew.
@@ -180,14 +184,16 @@ class GPR(GPModel):
                 var.shape == [num_data, output_dim]
         """
 
-        err = params["train_data_y"] - self.mean_function(params["mean_function"], params["train_data_x"])
+        err = train_data.y - self.mean_function(params["mean_function"], train_data.X)
 
-        return gp_predict_f(params, Xnew, params["train_data_x"], self.kernel, self.mean_function, err,
+        return gp_predict_f(params, Xnew, train_data.X, self.kernel, self.mean_function, err,
                             full_cov, full_output_cov, None, False)
 
+    @partial(jax.jit, static_argnums=(0,))
     def log_marginal_likelihood(self, params, data):
-        x, y = data
-        Kmm = self.kernel(params["kernel"], x, x) + jnp.eye(x.shape[-2], dtype=x.dtype) * default_jitter()  # [..., M, M]
+        x = data.X
+        y = data.y
+        Kmm = self.kernel(params["kernel"], x, x) + jnp.eye(x.shape[-2], dtype=x.dtype) * default_jitter()
         Kmm += jnp.eye(x.shape[-2], dtype=x.dtype) * params["likelihood"]["variance"]
         Lm = jsp.linalg.cholesky(Kmm, lower=True)
         mx = self.mean_function(params["mean_function"], x)
@@ -195,32 +201,29 @@ class GPR(GPModel):
         def tf_multivariate_normal(x, mu, L):
             """
             Computes the log-density of a multivariate normal.
-
             :param x: sample(s) for which we want the density
             :param mu: mean(s) of the normal distribution
             :param L: Cholesky decomposition of the covariance matrix
             :return: log densities
             """
-
             d = x - mu
             alpha = jsp.linalg.solve_triangular(L, d, lower=True)
             num_dims = d.shape[0]
             p = -0.5 * jnp.sum(jnp.square(alpha), axis=0)
             p -= 0.5 * num_dims * jnp.log(2 * jnp.pi)
-            p -= jnp.sum(jnp.log(jnp.diagonal(L)))
-
+            p -= jnp.sum(jnp.log(jnp.diag(L)))
             return p
 
-        # log_prob = jax.vmap(tf_multivariate_normal, in_axes=(None, None, 0))(y, mx, Lm)
         log_prob = tf_multivariate_normal(y, mx, Lm)
 
-        return jnp.sum(log_prob)  # jnp.sum(log_prob, axis=-1)
+        return jnp.sum(log_prob)
 
+    @partial(jax.jit, static_argnums=(0,))
     def multi_output_log_marginal_likelihood(self, params, data):
-        x, y = data
+        x = data.X
+        y = data.y
         Kmm = self.kernel.kernels[0](params["kernel"], x, x) + jnp.eye(x.shape[-2], dtype=x.dtype) * default_jitter()  # [..., M, M]
         # TODO a dodgy fix that assumes the kernels are the same for each dimension
-        Kmm += jnp.eye(x.shape[-2], dtype=x.dtype) * params["likelihood"]["variance"]
         Lm = jsp.linalg.cholesky(Kmm, lower=True)
         mx = self.mean_function(params["mean_function"], x)
 
@@ -230,20 +233,17 @@ class GPR(GPModel):
         def tf_multivariate_normal(x, mu, L):
             """
             Computes the log-density of a multivariate normal.
-
             :param x: sample(s) for which we want the density
             :param mu: mean(s) of the normal distribution
             :param L: Cholesky decomposition of the covariance matrix
             :return: log densities
             """
-
             d = x - mu
             alpha = jsp.linalg.solve_triangular(L, d, lower=True)
             num_dims = d.shape[0]
             p = -0.5 * jnp.sum(jnp.square(alpha), axis=0)
             p -= 0.5 * num_dims * jnp.log(2 * jnp.pi)
-            p -= jnp.sum(jnp.log(jnp.diagonal(L)))
-
+            p -= jnp.sum(jnp.log(jnp.diag(L)))
             return p
 
         log_prob = tf_multivariate_normal(y, mx, Lm)
