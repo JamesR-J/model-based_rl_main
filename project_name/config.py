@@ -10,7 +10,7 @@ def get_config():
     config.NORMALISE_ENV = True
     config.GENERATIVE_ENV = True
     config.TELEPORT = True  # aka teleporting in the original thing
-    config.PRETRAIN_HYPERPARAMS = True
+    config.PRETRAIN_HYPERPARAMS = False
     config.PRETRAIN_NUM_DATA = 1000
     config.NUM_INIT_DATA = 160#000
 
@@ -33,8 +33,8 @@ def get_config():
     config.ROLLOUT_SAMPLING = True  # TODO it only matters for MPC based things?
 
     # config.AGENT_TYPE = "MPC"
-    config.AGENT_TYPE = "PILCO"
-    # config.AGENT_TYPE = "TIP"
+    # config.AGENT_TYPE = "PILCO"
+    config.AGENT_TYPE = "TIP"
     # config.AGENT_TYPE = "PETS"
 
     config.AGENT_CONFIG = {}
