@@ -119,10 +119,11 @@ def single_output_conditional(kernel_params: dict,
 
 
 # @conditional.dispatch(None, None, None, MultioutputKernel)
-@conditional.dispatch(None, None, None, SeparateIndependent)
+@conditional.dispatch(None, None, None, None, SeparateIndependent)
 def independent_output_conditional(
     # def conditional(
     kernel_params: dict,
+    likelihood_params: dict,
     Xnew: Array,
     X: Array,
     # inducing_variable: InducingVariable,
@@ -134,6 +135,7 @@ def independent_output_conditional(
     white: Optional[bool] = False):
     """Multi-output GP conditional where outputs are assumed independent."""
     Kmm = (kernel(kernel_params, X, X) + jnp.eye(X.shape[-2], dtype=X.dtype) * default_jitter())  # [P, M, M]
+    Kmm = Kmm + jnp.eye(X.shape[-2], dtype=X.dtype) * likelihood_params["variance"]  # [P, M, M]
     Kmn = kernel(kernel_params, X, Xnew)  # [P, M, N]
     Knn = kernel(kernel_params, Xnew, full_cov=full_cov)  # [P, N, N] or [N, P]
 

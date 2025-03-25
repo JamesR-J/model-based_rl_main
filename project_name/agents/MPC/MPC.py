@@ -1,31 +1,25 @@
 """
-Model predictive control (MPC) with BAX.
+Model predictive control (MPC)
 """
 
-from argparse import Namespace
-import numpy as np
 from math import ceil
-import logging
-
-# from project_name.util.misc_util import dict_to_namespace
-# from project_name.util.control_util import compute_return, iCEM_generate_samples
-# from project_name.util.domain_util import project_to_domain
 from project_name.agents.agent_base import AgentBase
 
 import jax.numpy as jnp
 from project_name.agents.MPC import get_MPC_config
 import jax
 from functools import partial
-# import colorednoise
 import jax.random as jrandom
-from gymnax.environments import environment
-from flax import struct
 from project_name.utils import MPCTransition, MPCTransitionXY, MPCTransitionXYR
-import gymnax
 from project_name.config import get_config
-from typing import Union, Tuple
 from project_name.utils import update_obs_fn, update_obs_fn_teleport, get_f_mpc, get_f_mpc_teleport
 from project_name import dynamics_models
+from jaxtyping import Float, install_import_hook
+
+with install_import_hook("gpjax", "beartype.beartype"):
+    import logging
+    logging.getLogger('gpjax').setLevel(logging.WARNING)
+    import gpjax
 
 
 class MPCAgent(AgentBase):
@@ -40,9 +34,9 @@ class MPCAgent(AgentBase):
         self.agent_config = get_MPC_config()
 
         # TODO add some import from folder check thingo
-        self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
+        # self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
         # self.dynamics_model = dynamics_models.MOSVGP(env, env_params, config, self.agent_config, key)
-        # self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
+        self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
 
         self.obs_dim = len(self.env.observation_space(self.env_params).low)
         self.action_dim = self.env.action_space().shape[0]
@@ -311,7 +305,9 @@ class MPCAgent(AgentBase):
         return {"exe_path_x": x, "exe_path_y": y}
 
     @partial(jax.jit, static_argnums=(0, 1, 6, 7))
-    def execute_mpc(self, f, obs, train_state, train_data, key, horizon, actions_per_plan):
+    def execute_mpc(self, f, obs, train_state, split_data, key, horizon, actions_per_plan):
+        train_data = gpjax.Dataset(split_data[0], split_data[1])
+
         full_path, output, sample_returns = self.run_algorithm_on_f(f, obs, train_state, train_data, key, horizon, actions_per_plan)
 
         action = output[1]
@@ -333,9 +329,9 @@ class MPCAgent(AgentBase):
         return _postmean_fn
 
     # @partial(jax.jit, static_argnums=(0,))
-    def get_next_point(self, curr_obs_O, train_state, train_data, key):
+    def get_next_point(self, curr_obs_O, train_state, train_data, step_idx, key):
         key, _key = jrandom.split(key)
-        action_1A, exe_path, _ = self.execute_mpc(self.make_postmean_func(), curr_obs_O, train_state, train_data, _key, horizon=1, actions_per_plan=1)
+        action_1A, exe_path, _ = self.execute_mpc(self.make_postmean_func(), curr_obs_O, train_state, (train_data.X, train_data.y), _key, horizon=1, actions_per_plan=1)
         x_next_OPA = jnp.concatenate((curr_obs_O, jnp.squeeze(action_1A, axis=0)), axis=-1)
 
         exe_path = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=0), exe_path)
@@ -375,9 +371,10 @@ def test_MPC_algorithm():
     import time
     start_time = time.time()
 
-    path, (observations, actions, rewards), _ = mpc.run_algorithm_on_f(f, start_obs, None, _key,
-                                                                        horizon=25,
-                                                                        actions_per_plan=mpc.agent_config.ACTIONS_PER_PLAN)
+    path, (observations, actions, rewards), _ = mpc.run_algorithm_on_f(f, start_obs, None, None,
+                                                                       _key,
+                                                                       horizon=25,
+                                                                       actions_per_plan=mpc.agent_config.ACTIONS_PER_PLAN)
     # batch_key = jrandom.split(_key, 25)
     # path, (observations, actions, rewards) = jax.vmap(mpc.run_algorithm_on_f, in_axes=(None, None, 0))(None, start_obs, batch_key)
     # path, observations, actions, rewards = path[0], observations[0], actions[0], rewards[0]

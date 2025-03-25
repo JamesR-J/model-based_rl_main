@@ -28,6 +28,8 @@ def get_PETS_config():
     config.HIDDEN_SIZE = 64
     config.NUM_INIT_UPDATES = 2000
 
+    config.ROLLOUT_SAMPLING = True
+
     """
     Current iCEM adaptions
     Use constant batch size

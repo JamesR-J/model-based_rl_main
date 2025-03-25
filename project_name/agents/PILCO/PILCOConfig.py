@@ -23,10 +23,13 @@ def get_PILCO_config():
     config.OPTIMISATION_ITERS = 5  # TODO think this shoud be diff from config.iCEM_ITERS but should check
 
     config.LR = 1e-3
+    config.POLICY_LR = 0.1
     config.PRETRAIN_RESTARTS = 5
     config.PRETRAIN_GP_NUM_ITERS = 10#0#0
     config.GP_LR = 0.01
     config.NUM_INDUCING_POINTS = 100
+
+    config.ROLLOUT_SAMPLING = False
 
     """
     Current iCEM adaptions

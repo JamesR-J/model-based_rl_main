@@ -25,6 +25,8 @@ jax.config.update("jax_enable_x64", True)
 
 # TODO replace the updating dataset with flashbax maybe? would this be more efficient or less?
 
+# TODO convert this to the new GPJax as it is supported and has more variability altho less flexibility
+
 # TODO sort out this aidan scannall GPJax types, and also to make it work well, can we improve batch optimisation?
 # TODO also the whole multidispatch thing is a mess
 
@@ -53,9 +55,9 @@ def main(_):
     #     mode=config.WANDB
     # )
 
-    # config.DEVICE = jax.lib.xla_bridge.get_backend().platform
+    config.DEVICE = jax.lib.xla_bridge.get_backend().platform
     # # config.DEVICE = jax.extend.backend.get_backend()
-    # logging.info(f"Current JAX Device: {config.DEVICE}")
+    logging.info(f"Current JAX Device: {config.DEVICE}")
 
     with jax.disable_jit(disable=config.DISABLE_JIT):
         train = run_train(config)

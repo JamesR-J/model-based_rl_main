@@ -8,7 +8,6 @@ from typing import List, Tuple, Dict, Optional, NamedTuple, Any
 from functools import partial
 import GPJax_AScannell as gpjaxas
 import optax
-# import gpjax
 from project_name.dynamics_models import DynamicsModelBase
 from GPJax_AScannell.gpjax.config import default_jitter
 

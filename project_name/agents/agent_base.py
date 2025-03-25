@@ -36,5 +36,5 @@ class AgentBase:  # TODO sort this oot
     def make_postmean_func(self):
         raise NotImplementedError
 
-    def get_next_point(self, curr_obs, train_state, key):
+    def get_next_point(self, curr_obs, train_state, train_data, step_idx, key):
         raise NotImplementedError

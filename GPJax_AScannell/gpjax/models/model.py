@@ -12,22 +12,6 @@ from GPJax_AScannell.gpjax.likelihoods import Likelihood
 from GPJax_AScannell.gpjax.mean_functions import MeanFunction, Zero
 from GPJax_AScannell.gpjax.utilities.ops import sample_mvn_diag, sample_mvn
 from GPJax_AScannell.gpjax.prediction import gp_predict_f
-# import beartype.typing as tp
-
-# from cola.annotations import PSD
-# from cola.linalg.algorithm_base import Algorithm
-# from cola.linalg.decompositions.decompositions import Cholesky
-# from cola.linalg.inverse.inv import solve
-# from cola.ops.operators import I_like
-
-# from gpjax.kernels.base import AbstractKernel
-# from gpjax.likelihoods import AbstractLikelihood, Gaussian, NonGaussian
-# from gpjax.mean_functions import AbstractMeanFunction
-# from gpjax.kernels import RFF
-# from gpjax.typing import Array, FunctionalSample, KeyArray
-# from jaxtyping import FLoat
-from flax import nnx
-from typing import Union
 from jax import scipy as jsp
 from GPJax_AScannell.gpjax.config import default_jitter
 from functools import partial
@@ -102,7 +86,7 @@ class GPModel(Module, abc.ABC):
                         """
                         if full_output_cov:
                             raise NotImplementedError("full_output_cov=True is not implemented yet.")
-                        f_mean, f_cov = self.predict_f(params, Xnew, full_cov, full_output_cov)
+                        f_mean, f_cov = self.predict_f(params, Xnew, train_data, full_cov, full_output_cov)
 
                         if f_cov.ndim == 3:
                             samples = sample_mvn(key, f_mean.T, f_cov, num_samples)
@@ -222,11 +206,11 @@ class GPR(GPModel):
     def multi_output_log_marginal_likelihood(self, params, data):
         x = data.X
         y = data.y
-        Kmm = self.kernel.kernels[0](params["kernel"], x, x) + jnp.eye(x.shape[-2], dtype=x.dtype) * default_jitter()  # [..., M, M]
+        Kmm = self.kernel.kernels[0](params["kernel"], x, x) + jnp.eye(x.shape[-2], dtype=x.dtype) * default_jitter()
         # TODO a dodgy fix that assumes the kernels are the same for each dimension
+        Kmm += jnp.eye(x.shape[-2], dtype=x.dtype) * params["likelihood"]["variance"]
         Lm = jsp.linalg.cholesky(Kmm, lower=True)
         mx = self.mean_function(params["mean_function"], x)
-
         # TODO added in below which is a dodgy fix that only works if mean function is zero
         mx = jnp.expand_dims(mx[:, 0], axis=-1)
 

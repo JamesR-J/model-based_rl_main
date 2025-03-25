@@ -62,3 +62,16 @@ class LinearController(nn.Module):
     #     sigma = 1
     #     self.W.assign(mean + sigma * objax.random.normal(self.W.shape))
     #     self.b.assign(mean + sigma * objax.random.normal(self.b.shape))
+    #
+    # def randomize(self, key):
+    #     """
+    #     Randomize weights and biases using a JAX random key
+    #     """
+    #     w_key, b_key = jax.random.split(key)
+    #
+    #     # Randomize weights
+    #     w_init = jax.random.normal(w_key, self.W.shape)
+    #     b_init = jax.random.normal(b_key, self.b.shape)
+    #
+    #     self.W = w_init
+    #     self.b = b_init

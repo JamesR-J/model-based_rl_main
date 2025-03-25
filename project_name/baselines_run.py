@@ -17,7 +17,12 @@ from functools import partial
 import time
 from project_name.viz import plotters, plot
 import neatplot
-import gpjax
+from jaxtyping import Float, install_import_hook
+
+with install_import_hook("gpjax", "beartype.beartype"):
+    import logging
+    logging.getLogger('gpjax').setLevel(logging.WARNING)
+    import gpjax
 
 
 def run_train(config):
@@ -93,30 +98,32 @@ def run_train(config):
 
         return true_path, test_points, path_lengths, all_returns
 
-    # get some groundtruth data
-    key, _key = jrandom.split(key)
-    batch_key = jrandom.split(_key, config.NUM_EVAL_TRIALS)
-    start_gt_time = time.time()
-    true_paths, test_points, path_lengths, all_returns = jax.vmap(execute_gt_mpc, in_axes=(None, None, 0))(start_obs, mpc_func, batch_key)
-    logging.info(f"Ground truth time taken = {time.time() - start_gt_time:.2f}s; "
-                 f"Mean Return = {jnp.mean(all_returns):.2f}; Std Return = {jnp.std(all_returns):.2f}; "
-                 f"Mean Path Lengths = {jnp.mean(path_lengths)}; ")
+    if actor.agent_config.ROLLOUT_SAMPLING:
+        # get some groundtruth data
+        key, _key = jrandom.split(key)
+        batch_key = jrandom.split(_key, config.NUM_EVAL_TRIALS)
+        start_gt_time = time.time()
+        true_paths, test_points, path_lengths, all_returns = jax.vmap(execute_gt_mpc, in_axes=(None, None, 0))(start_obs, mpc_func, batch_key)
+        logging.info(f"Ground truth time taken = {time.time() - start_gt_time:.2f}s; "
+                     f"Mean Return = {jnp.mean(all_returns):.2f}; Std Return = {jnp.std(all_returns):.2f}; "
+                     f"Mean Path Lengths = {jnp.mean(path_lengths)}; ")
 
-    # Plot groundtruth paths and print info
-    ax_gt = None
-    fig_gt = None
-    for idx in range(true_paths["exe_path_x"].shape[0]):  # TODO sort the dodgy plotting can we add inside the vmap?
-        plot_path = PlotTuple(x=true_paths["exe_path_x"][idx], y=true_paths["exe_path_y"][idx])
-        ax_gt, fig_gt = plot_fn(plot_path, ax_gt, fig_gt, domain, "samp")
-    if fig_gt and config.SAVE_FIGURES:
-        fig_gt.suptitle("Ground Truth Eval")
-        neatplot.save_figure("figures/gt", "png", fig=fig_gt)
+        # Plot groundtruth paths and print info
+        ax_gt = None
+        fig_gt = None
+        for idx in range(true_paths["exe_path_x"].shape[0]):  # TODO sort the dodgy plotting can we add inside the vmap?
+            plot_path = PlotTuple(x=true_paths["exe_path_x"][idx], y=true_paths["exe_path_y"][idx])
+            ax_gt, fig_gt = plot_fn(plot_path, ax_gt, fig_gt, domain, "samp")
+        if fig_gt and config.SAVE_FIGURES:
+            fig_gt.suptitle("Ground Truth Eval")
+            neatplot.save_figure("figures/gt", "png", fig=fig_gt)
 
     # this runs the main loop of learning
     def _main_loop(curr_obs_O, train_data, train_state, env_state, key):
-        for i in range(config.NUM_ITERS):
+        global_returns = 0
+        for step_idx in range(config.NUM_ITERS):
             # log some info that we need basically
-            logging.info("---" * 5 + f" Start iteration i={i} " + "---" * 5)
+            logging.info("---" * 5 + f" Start iteration i={step_idx} " + "---" * 5)
             logging.info(f"Length of data.x: {len(train_data.X)}; Length of data.y: {len(train_data.y)}")
 
             # TODO some if statement if our input data does not exist as not using generative approach, i.e. the first step
@@ -125,15 +132,17 @@ def run_train(config):
             x_next_OPA, exe_path, curr_obs_O, train_state, acq_val, key = actor.get_next_point(curr_obs_O,
                                                                                                train_state,
                                                                                                train_data,
+                                                                                               step_idx,
                                                                                                key)
 
             # periodically run evaluation and plot
-            if i % config.EVAL_FREQ == 0 or i + 1 == config.NUM_ITERS:
+            if (step_idx % config.EVAL_FREQ == 0 or step_idx + 1 == config.NUM_ITERS) and actor.agent_config.ROLLOUT_SAMPLING:
                 def _eval_trial(start_obs, start_env_state, key):
                     def _env_step(env_runner_state, unused):
                         obs_O, env_state, key = env_runner_state
                         key, _key = jrandom.split(key)
-                        action_1A, _, _ = actor.execute_mpc(actor.make_postmean_func(), obs_O, train_state, _key, horizon=1, actions_per_plan=1)
+                        action_1A, _, _ = actor.execute_mpc(actor.make_postmean_func(), obs_O, train_state, (train_data.X, train_data.y),
+                                                            _key, horizon=1, actions_per_plan=1)
                         action_A = jnp.squeeze(action_1A, axis=0)
                         key, _key = jrandom.split(key)
                         nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
@@ -146,7 +155,8 @@ def run_train(config):
                     real_path_x_SOPA = jnp.concatenate((real_obs_SP1O[:-1], real_actions_SA), axis=-1)
                     real_path_y_SO = real_obs_SP1O[1:] - real_obs_SP1O[:-1]
                     key, _key = jrandom.split(key)
-                    real_path_y_hat_SO = actor.make_postmean_func2()(real_path_x_SOPA, None, None, train_state, _key)
+                    real_path_y_hat_SO = actor.make_postmean_func2()(real_path_x_SOPA, None, None, train_state,
+                                                                     train_data, _key)
                     # TODO unsure how to fix the above
                     mse = 0.5 * jnp.mean(jnp.sum(jnp.square(real_path_y_SO - real_path_y_hat_SO), axis=1))
 
@@ -166,27 +176,44 @@ def run_train(config):
                 utils.make_plots(plot_fn, domain,
                                  PlotTuple(x=true_paths["exe_path_x"][-1], y=true_paths["exe_path_y"][-1]),
                                  PlotTuple(x=train_data.X, y=train_data.y),
-                                 env, env_params, config, exe_path, real_paths_mpc, x_next_OPA, i)
+                                 env, env_params, config, exe_path, real_paths_mpc, x_next_OPA, step_idx)
+
+            action_A = x_next_OPA[-action_dim:]
 
             # Query function, update data
             key, _key = jrandom.split(key)
             if config.GENERATIVE_ENV:
-                y_next_O = mpc_func(jnp.expand_dims(x_next_OPA, axis=0), env, env_params, train_state, _key)
+                y_next_O = mpc_func(jnp.expand_dims(x_next_OPA, axis=0), env, env_params, train_state, train_data, _key)
                 new_env_state = "UHOH"
-                if config.ROLLOUT_SAMPLING:
+                if actor.agent_config.ROLLOUT_SAMPLING:
                     delta = y_next_O[-env.obs_dim:]
                     nobs_O = actor._update_fn(curr_obs_O, delta, env, env_params)
                     # TODO sort the above out, it works when curr_obs doesn't change
                 else:
-                    raise NotImplementedError("When is it not rollout sampling?")
+                    # raise NotImplementedError("When is it not rollout sampling?")
+
+                    # TODO dodgy fix for now
+
+                    nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
+                    y_next_O = nobs_O - curr_obs_O
+
+                    global_returns += reward
+                    logging.info(f"Iteration i={step_idx} Action: {action_A}")
+                    logging.info(f"Iteration i={step_idx} State : {nobs_O}")
+                    logging.info(f"iteration i={step_idx} Return so far: {global_returns}")
             else:
-                action_A = x_next_OPA[-action_dim:]
                 nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
                 y_next_O = nobs_O - curr_obs_O
+
+                global_returns += reward
+                logging.info(f"Iteration i={step_idx} Action: {action_A}")
+                logging.info(f"Iteration i={step_idx} State : {nobs_O}")
+                logging.info(f"iteration i={step_idx} Return so far: {global_returns}")
+                # TODO should the above be for both?
             # the above should match
 
             train_data = train_data + gpjax.Dataset(X=jnp.expand_dims(x_next_OPA, axis=0), y=jnp.expand_dims(y_next_O, axis=0))
-            # TODO will this work with PETS as well?
+            # TODO will the above work with PETS as well?
             env_state = new_env_state
             curr_obs_O = nobs_O
 
