@@ -123,6 +123,7 @@ def run_train(config):
         global_returns = 0
         for step_idx in range(config.NUM_ITERS):
             # log some info that we need basically
+            step_start_time = time.time()
             logging.info("---" * 5 + f" Start iteration i={step_idx} " + "---" * 5)
             logging.info(f"Length of data.x: {len(train_data.X)}; Length of data.y: {len(train_data.y)}")
 
@@ -216,6 +217,7 @@ def run_train(config):
             # TODO will the above work with PETS as well?
             env_state = new_env_state
             curr_obs_O = nobs_O
+            logging.info(f"Iteration time taken - {time.time() - step_start_time:.1f}s")
 
     _main_loop(start_obs, init_dataset, train_state, start_env_state, key)
 

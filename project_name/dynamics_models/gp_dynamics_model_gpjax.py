@@ -48,8 +48,8 @@ from flax import nnx
 
 class SeparateIndependent(gpjax.kernels.AbstractKernel):
     def __init__(self,
-                 kernel0: gpjax.kernels.stationary.StationaryKernel = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=jnp.array([2.27, 7.73, 138.94]), variance=0.01),
-                 kernel1: gpjax.kernels.stationary.StationaryKernel = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=jnp.array([0.84, 288.15, 11.05]), variance=0.01)
+                 kernel0: gpjax.kernels.AbstractKernel = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=jnp.array([2.27, 7.73, 138.94]), variance=0.01),
+                 kernel1: gpjax.kernels.AbstractKernel = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=jnp.array([0.84, 288.15, 11.05]), variance=0.01)
                  ):
         self.kernel0 = kernel0
         self.kernel1 = kernel1
@@ -68,7 +68,6 @@ class SeparateIndependent(gpjax.kernels.AbstractKernel):
         return k0_switch * self.kernel0(X, Xp) + k1_switch * self.kernel1(X, Xp)
 
 
-
 class MOGPGPJax(DynamicsModelBase):
     def __init__(self, env, env_params, config, agent_config, key):
         super().__init__(env, env_params, config, agent_config, key)
@@ -83,7 +82,7 @@ class MOGPGPJax(DynamicsModelBase):
         # kernel = gpx.kernels.RBF(active_dims=[0, 1], lengthscale=jnp.array([10.0, 8.0]), variance=25.0)
         kernel = SeparateIndependent()
         self.prior = gpjax.gps.Prior(mean_function=mean, kernel=kernel)
-        self.likelihood_builder = lambda n: gpjax.likelihoods.Gaussian(num_datapoints=n, obs_stddev=gpjax.parameters.PositiveReal(jnp.array(3.0)))
+        self.likelihood_builder = lambda n: gpjax.likelihoods.Gaussian(num_datapoints=n, obs_stddev=gpjax.parameters.PositiveReal(jnp.array(1.0)))
 
     def create_train_state(self, init_data_x, init_data_y, key):
         data = self._adjust_dataset(init_data_x, init_data_y)
@@ -261,14 +260,14 @@ class MOGPGPJax(DynamicsModelBase):
 
         latent_dist = opt_posterior.predict(XNew3D.X, data)
         mu = latent_dist.mean()  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
-        mu = mu.reshape((XNew.shape[0], -1))  # TODO a dodgy fix, is this correct?
+        mu = mu.reshape(-1, self.obs_dim) # TODO is this correct?
 
         if full_cov:
             cov = latent_dist.covariance()
             std = jnp.expand_dims(cov, axis=0)  # cov.reshape((XNew.shape[0], -1))  # TODO a dodgy fix
         else:
             std = latent_dist.stddev()
-            std = std.reshape((XNew.shape[0], -1))
+            std = std.reshape(-1, self.obs_dim) # TODO is this correct?
         # TODO is there a way to jaxify this at some point? The issue is the shapes are different so don't think it is possible
 
         return mu, std
