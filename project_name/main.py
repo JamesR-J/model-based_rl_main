@@ -8,6 +8,7 @@ import logging
 
 jax.config.update("jax_enable_x64", True)
 
+# TODO need to pretrain to find optimal params for the svgp
 
 # TODO set a precedent for when we split keys, it should be at the lowest level possible before use
 
@@ -15,20 +16,12 @@ jax.config.update("jax_enable_x64", True)
 
 # TODO add in the learnt reward function as well
 
-# TODO add in some hyperparm fit from initial data, OR some preloaded hyperparams, this a mare with the GPs but good learning
-# TODO can do GPs last and focus on the PETS pre fit if possible
-
 # TODO if we want to pretend we have no existing data how would this work? This may be a struggle with Jax so need to
 # TODO figure the best approach
 
 # TODO sort out all the right shapes, so we don't have to arbitrarily squeeze and add dims in MPC, also can we avoid postmean_func2
 
 # TODO replace the updating dataset with flashbax maybe? would this be more efficient or less?
-
-# TODO convert this to the new GPJax as it is supported and has more variability altho less flexibility
-
-# TODO sort out this aidan scannall GPJax types, and also to make it work well, can we improve batch optimisation?
-# TODO also the whole multidispatch thing is a mess
 
 # env, env_params = gymnax.make("MountainCarContinuous-v0")
 # TODO make these envs in gymnax style for continuous control

@@ -38,3 +38,6 @@ class AgentBase:  # TODO sort this oot
 
     def get_next_point(self, curr_obs, train_state, train_data, step_idx, key):
         raise NotImplementedError
+
+    def evaluate(self, start_obs, start_env_state, train_state, train_data, key):
+        raise NotImplementedError

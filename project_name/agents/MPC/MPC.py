@@ -15,6 +15,7 @@ from project_name.config import get_config
 from project_name.utils import update_obs_fn, update_obs_fn_teleport, get_f_mpc, get_f_mpc_teleport
 from project_name import dynamics_models
 from jaxtyping import Float, install_import_hook
+from project_name import utils
 
 with install_import_hook("gpjax", "beartype.beartype"):
     import logging
@@ -36,7 +37,8 @@ class MPCAgent(AgentBase):
         # TODO add some import from folder check thingo
         # self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
         # self.dynamics_model = dynamics_models.MOSVGP(env, env_params, config, self.agent_config, key)
-        self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
+        # self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
+        self.dynamics_model = dynamics_models.MOSVGPGPJax(env, env_params, config, self.agent_config, key)
 
         self.obs_dim = len(self.env.observation_space(self.env_params).low)
         self.action_dim = self.env.action_space().shape[0]
@@ -317,12 +319,14 @@ class MPCAgent(AgentBase):
         return action, exe_path, output
 
     def make_postmean_func(self):
+        @partial(jax.jit, static_argnums=(1, 2))
         def _postmean_fn(x, unused1, unused2, train_state, train_data, key):
             mu, std = self.dynamics_model.get_post_mu_cov(x, train_state, train_data, full_cov=False)
             return jnp.squeeze(mu, axis=0)
         return _postmean_fn
 
     def make_postmean_func2(self):
+        @partial(jax.jit, static_argnums=(1, 2))
         def _postmean_fn(x, unused1, unused2, train_state, train_data, key):
             mu, std = self.dynamics_model.get_post_mu_cov(x, train_state, train_data, full_cov=False)
             return mu
@@ -340,6 +344,36 @@ class MPCAgent(AgentBase):
         # TODO can we jax the assertion?
 
         return x_next_OPA, exe_path, curr_obs_O, train_state, None, key
+
+    @partial(jax.jit, static_argnums=(0,))
+    def evaluate(self, start_obs, start_env_state, train_state, sep_data, key):
+        train_data = gpjax.Dataset(sep_data[0], sep_data[1])
+        def _env_step(env_runner_state, unused):
+            obs_O, env_state, key = env_runner_state
+            key, _key = jrandom.split(key)
+            action_1A, _, _ = self.execute_mpc(self.make_postmean_func(), obs_O, train_state,
+                                                (train_data.X, train_data.y),
+                                                _key, horizon=1, actions_per_plan=1)
+            action_A = jnp.squeeze(action_1A, axis=0)
+            key, _key = jrandom.split(key)
+            nobs_O, new_env_state, reward, done, info = self.env.step(_key, env_state, action_A, self.env_params)
+            return (nobs_O, new_env_state, key), (nobs_O, reward, action_A)
+
+        key, _key = jrandom.split(key)
+        _, (nobs_SO, real_rewards_S, real_actions_SA) = jax.lax.scan(_env_step, (start_obs, start_env_state, _key),
+                                                                     None, self.env_params.horizon)
+        real_obs_SP1O = jnp.concatenate((jnp.expand_dims(start_obs, axis=0), nobs_SO))
+        real_returns_1 = self._compute_returns(jnp.expand_dims(real_rewards_S, axis=0))
+        real_path_x_SOPA = jnp.concatenate((real_obs_SP1O[:-1], real_actions_SA), axis=-1)
+        real_path_y_SO = real_obs_SP1O[1:] - real_obs_SP1O[:-1]
+        key, _key = jrandom.split(key)
+        real_path_y_hat_SO = self.make_postmean_func2()(real_path_x_SOPA, None, None, train_state,
+                                                         train_data, _key)
+        # TODO unsure how to fix the above
+        mse = 0.5 * jnp.mean(jnp.sum(jnp.square(real_path_y_SO - real_path_y_hat_SO), axis=1))
+
+        return (utils.RealPath(x=real_path_x_SOPA, y=real_path_y_SO, y_hat=real_path_y_hat_SO),
+                jnp.squeeze(real_returns_1), jnp.mean(real_returns_1), jnp.std(real_returns_1), jnp.mean(mse))
 
 def test_MPC_algorithm():
     from project_name.envs.gymnax_pilco_cartpole import GymnaxPilcoCartPole

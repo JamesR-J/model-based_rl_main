@@ -53,16 +53,14 @@ class MOGP(DynamicsModelBase):
 
     @partial(jax.jit, static_argnums=(0,))
     def optimise(self, train_data, params):
-        # transforms = self.gp.get_transforms()
-        # constrain_params = gpjaxas.parameters.build_constrain_params(transforms)
-        # params = constrain_params(params)
-
-
-
-        def create_sep_transform(params):
-            params["kernel"] = {"lengthscales": params["kernel"][0]["lengthscales"],
-                                "variance": params["kernel"][0]["variance"]}
-            return params
+        # # transforms = self.gp.get_transforms()
+        # # constrain_params = gpjaxas.parameters.build_constrain_params(transforms)
+        # # params = constrain_params(params)
+        #
+        # def create_sep_transform(params):
+        #     params["kernel"] = {"lengthscales": params["kernel"][0]["lengthscales"],
+        #                         "variance": params["kernel"][0]["variance"]}
+        #     return params
 
         sep_params = self.create_sep_params(params)
         # sep_transforms = create_sep_transform(transforms)

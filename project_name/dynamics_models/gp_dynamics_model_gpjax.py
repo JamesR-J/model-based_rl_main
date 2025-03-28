@@ -24,42 +24,20 @@ from gpjax.typing import (
 from GPJax_AScannell.gpjax.utilities.ops import sample_mvn_diag, sample_mvn
 from cola.ops.operators import I_like
 from flax import nnx
+import tensorflow_probability.substrates.jax as tfp
 
 
-
-# class SeparateIndependent(gpjax.kernels.AbstractKernel):
-#     """Separate independent kernels for each output dimension"""
-#
-#     name: str = "SeparateIndependent"
-#
-#     def __init__(self,
-#                  kernel0: gpjax.kernels.stationary.StationaryKernel = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=jnp.array([10.0, 8.0, 10.0]), variance=25.0),
-#                  kernel1: gpjax.kernels.stationary.StationaryKernel = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=jnp.array([10.0, 8.0, 10.0]), variance=25.0)
-#                  ):
-#         self.kernel0 = kernel0
-#         self.kernel1 = kernel1
-#         super().__init__(compute_engine=DenseKernelComputation())
-#
-#     def __call__(self, x: Float[Array, " D"], y: Float[Array, " D"]) -> ScalarFloat:
-#         Kxxs = jax.tree_map(lambda kern: kern(x, y), [self.kernel0, self.kernel1])
-#         Kxxs = jnp.stack(Kxxs, axis=-1)
-#         return Kxxs
-
-
-class SeparateIndependent(gpjax.kernels.AbstractKernel):
-    def __init__(self,
-                 kernel0: gpjax.kernels.AbstractKernel = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=jnp.array([2.27, 7.73, 138.94]), variance=0.01),
-                 kernel1: gpjax.kernels.AbstractKernel = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=jnp.array([0.84, 288.15, 11.05]), variance=0.01)
-                 ):
-        self.kernel0 = kernel0
-        self.kernel1 = kernel1
-        super().__init__(compute_engine=gpjax.kernels.computations.DenseKernelComputation())
+class SeparateIndependent(gpjax.kernels.stationary.StationaryKernel):
+    def __init__(self, lengthscale1, lengthscale2, variance1, variance2):
+        self.kernel0 = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=lengthscale1, variance=variance1)
+        self.kernel1 = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=lengthscale2, variance=variance2)
+        super().__init__(n_dims=3, compute_engine=gpjax.kernels.computations.DenseKernelComputation())
 
     def __call__(self, X: Float[Array, "1 D"], Xp: Float[Array, "1 D"]) -> Float[Array, "1"]:
         # standard RBF-SE kernel is x and x' are on the same output, otherwise returns 0
 
-        z = jnp.array(X[2], dtype=int)
-        zp = jnp.array(Xp[2], dtype=int)
+        z = jnp.array(X[-1], dtype=int)
+        zp = jnp.array(Xp[-1], dtype=int)
 
         # achieve the correct value via 'switches' that are either 1 or 0
         k0_switch = ((z + 1) % 2) * ((zp + 1) % 2)
@@ -67,25 +45,28 @@ class SeparateIndependent(gpjax.kernels.AbstractKernel):
 
         return k0_switch * self.kernel0(X, Xp) + k1_switch * self.kernel1(X, Xp)
 
+    @property
+    def spectral_density(self) -> tfp.distributions.Normal:
+        return tfp.distributions.Normal(0.0, 1.0)
+
 
 class MOGPGPJax(DynamicsModelBase):
     def __init__(self, env, env_params, config, agent_config, key):
         super().__init__(env, env_params, config, agent_config, key)
-        num_latent_gps = self.obs_dim
 
-        self.ls = jnp.array([[2.27, 7.73, 138.94], [0.84, 288.15, 11.05]],
-                            dtype=jnp.float64)
-        alpha = jnp.array([0.26, 2.32, 11.59, 3.01], dtype=jnp.float64)  # TODO what is alpha? is this periodic?
-        self.sigma = 0.01
+        kernel = SeparateIndependent(lengthscale1 = jnp.array((2.81622296,   9.64035469, 142.60660018)),
+                                     lengthscale2 = jnp.array((0.92813981, 280.24169475,  14.85778016)),
+                                     variance1 = jnp.array((0.78387795)),
+                                     variance2 = jnp.array((0.22877621)))
 
-        mean = gpjax.mean_functions.Zero()
-        # kernel = gpx.kernels.RBF(active_dims=[0, 1], lengthscale=jnp.array([10.0, 8.0]), variance=25.0)
-        kernel = SeparateIndependent()
+        # mean = gpjax.mean_functions.Zero()
+        mean = gpjax.mean_functions.Constant(jnp.array((0.07455202985890419)))
         self.prior = gpjax.gps.Prior(mean_function=mean, kernel=kernel)
-        self.likelihood_builder = lambda n: gpjax.likelihoods.Gaussian(num_datapoints=n, obs_stddev=gpjax.parameters.PositiveReal(jnp.array(1.0)))
+        self.likelihood_builder = lambda n: gpjax.likelihoods.Gaussian(num_datapoints=n,
+                                                                       obs_stddev=gpjax.parameters.PositiveReal(jnp.array(0.005988507226896687)))
 
     def create_train_state(self, init_data_x, init_data_y, key):
-        data = self._adjust_dataset(init_data_x, init_data_y)
+        data = self._adjust_dataset(gpjax.Dataset(init_data_x, init_data_y))
         likelihood = self.likelihood_builder(data.n)
         posterior = self.prior * likelihood
         graphdef, state = nnx.split(posterior)
@@ -93,23 +74,22 @@ class MOGPGPJax(DynamicsModelBase):
         return {"train_state": state}
 
     @staticmethod
-    def _adjust_dataset(x, y):  # TODO generalise this to more dimensions
-        # Change vectors x -> X = (x,z), and vectors y -> Y = (y,z) via the artificial z label
-        def label_position(data):  # 2,20
-            # introduce alternating z label
-            n_points = len(data[0])
-            label = jnp.tile(jnp.array([0.0, 1.0]), n_points)
-            return jnp.vstack((jnp.repeat(data, repeats=2, axis=1), label)).T
+    def _adjust_dataset(dataset):
+        num_points = dataset.X.shape[0]
+        in_dim = dataset.X.shape[1]
+        out_dim = dataset.y.shape[1]
+        # print(f"Num Points: {num_points}; Num Inputs: {in_dim}; Num Outputs: {out_dim}")
 
-        # change vectors y -> Y by reshaping the velocity measurements
-        def stack_velocity(data):  # 2,20
-            return data.T.flatten().reshape(-1, 1)
+        label = jnp.tile(jnp.array(jnp.linspace(0, out_dim - 1, out_dim)), num_points)
 
-        def dataset_3d(pos, vel):
-            return gpjax.Dataset(label_position(pos), stack_velocity(vel))
+        new_x = jnp.hstack((jnp.repeat(dataset.X, repeats=out_dim, axis=0), jnp.expand_dims(label, axis=-1)))
 
-        # takes in dimension (number of data points, num features)
-        return dataset_3d(jnp.swapaxes(x, 0, 1), jnp.swapaxes(y, 0, 1))
+        new_y = dataset.y.reshape(-1, 1)
+
+        assert new_x.shape == (num_points * out_dim, in_dim + 1), "Output X is the wrong shape"
+        assert new_y.shape == (num_points * out_dim, 1), "Output Y is the wrong shape"
+
+        return gpjax.Dataset(new_x, new_y)
 
     def pretrain_params(self, init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key):
         opt_posterior = self.optimise_gp(pretrain_data_x, pretrain_data_y, key)
@@ -135,13 +115,10 @@ class MOGPGPJax(DynamicsModelBase):
     @partial(jax.jit, static_argnums=(0,))
     def optimise_gp(self, x, y, key):
         key, _key = jrandom.split(key)
-        data = self._adjust_dataset(x, y)
+        data = self._adjust_dataset(gpjax.Dataset(x, y))
         likelihood = self.likelihood_builder(data.n)
-        posterior = self.prior * likelihood
-        # q = gpjax.variational_families.VariationalGaussian(posterior, self.z)
 
-        # TODO do we add a scheduling lr?
-        opt_posterior, _ = gpjax.fit(model=posterior,
+        opt_posterior, _ = gpjax.fit(model=self.prior * likelihood,
                                      objective=lambda p, d: -gpjax.objectives.conjugate_mll(p, d),
                                      train_data=data,
                                      optim=optax.adam(learning_rate=self.agent_config.GP_LR),
@@ -154,153 +131,49 @@ class MOGPGPJax(DynamicsModelBase):
 
         return {"train_state": state}
 
-    def predict_on_noisy_inputs(self, m, s, params):   # TODO Idk if even nee this
-        data = params["data"]  # self._adjust_dataset(params["train_data_x"], params["train_data_y"])
-
-        # turns dataset of data_points, num_features into data_points * num_outputs, num_features + (num_outputs - 1)
-        # TODO generalise the above thing to make it actually work with n number of outputs
-
-        likelihood = gpjax.likelihoods.Gaussian(num_datapoints=data.n, obs_stddev=gpjax.parameters.Static(jnp.array(1e-6)))
-        posterior = self.prior * likelihood
-        q = gpjax.variational_families.VariationalGaussian(posterior, params["inducing_points"])
-
-        # XNew3D = self._adjust_dataset(XNew, jnp.zeros((XNew.shape[0], 2)))  # TODO separate this to be just X aswell
-
-        data_x = jnp.ones((160, 3))
-        data = self._adjust_dataset(data_x, jnp.ones((160, 2)))  # TODO how do we do this if using the gpjax dataset all the time?
-        new_data = self._adjust_dataset(m, jnp.zeros((m.shape[0], 2)))
-
-        def calculate_factorisations(posterior, data):
-            K = posterior.prior.kernel.gram(data.X).A
-            eye = jnp.eye(jnp.shape(data.X)[0])
-            L = jsp.linalg.cho_factor(K + eye * posterior.jitter, lower=True)
-            iK = jsp.linalg.cho_solve(L, eye)
-            beta = jsp.linalg.cho_solve(L, data.y)[:, 0]
-            return iK, beta
-
-        def predict_given_factorizations(m, s, inp, iK, beta, data):
-            """
-            Approximate GP regression at noisy inputs via moment matching
-            IN: mean (m) (row vector) and (s) variance of the state
-            OUT: mean (M) (row vector), variance (S) of the action
-                 and inv(s)*input-ouputcovariance
-            """
-            # Calculate M and V: mean and inv(s) times input-output covariance
-            iL = objax.Vectorize(lambda x: jnp.diag(x, k=0), objax.VarCollection())(
-                1 / self.lengthscales
-            )
-            iN = inp @ iL
-            B = iL @ s[0, ...] @ iL + jnp.eye(self.num_dims)
-
-            # Redefine iN as in^T and t --> t^T
-            # B is symmetric so its the same
-            t = jnp.transpose(
-                jnp.linalg.solve(B, jnp.transpose(iN, axes=(0, 2, 1))),
-                axes=(0, 2, 1),
-            )
-
-            lb = jnp.exp(-0.5 * jnp.sum(iN * t, -1)) * beta
-            tiL = t @ iL
-            c = self.variance / jnp.sqrt(jnp.linalg.det(B))
-
-            M = (jnp.sum(lb, -1) * c)[:, None]
-            V = (jnp.transpose(tiL, axes=(0, 2, 1)) @ lb[:, :, None])[..., 0] * c[:, None]
-
-            # Calculate S: Predictive Covariance
-            z = objax.Vectorize(objax.Vectorize(lambda x: jnp.diag(x, k=0), objax.VarCollection()), objax.VarCollection())(
-                1.0 / jnp.square(self.lengthscales[None, :, :])
-                + 1.0 / jnp.square(self.lengthscales[:, None, :])
-            )
-
-            R = (s @ z) + jnp.eye(self.num_dims)
-
-            X = inp[None, :, :, :] / jnp.square(self.lengthscales[:, None, None, :])
-            X2 = -inp[:, None, :, :] / jnp.square(self.lengthscales[None, :, None, :])
-            Q = 0.5 * jnp.linalg.solve(R, s)
-            maha = (X - X2) @ Q @ jnp.transpose(X - X2, axes=(0, 1, 3, 2))
-
-            k = jnp.log(self.variance)[:, None] - 0.5 * jnp.sum(jnp.square(iN), -1)
-            L = jnp.exp(k[:, None, :, None] + k[None, :, None, :] + maha)
-            S = (
-                        jnp.tile(beta[:, None, None, :], [1, self.num_outputs, 1, 1])
-                        @ L
-                        @ jnp.tile(beta[None, :, :, None], [self.num_outputs, 1, 1, 1])
-                )[:, :, 0, 0]
-
-            diagL = jnp.transpose(
-                objax.Vectorize(
-                    objax.Vectorize(lambda x: jnp.diag(x, k=0), objax.VarCollection()),
-                    objax.VarCollection(),
-                )(jnp.transpose(L))
-            )
-            S = S - jnp.diag(jnp.sum(jnp.multiply(iK, diagL), [1, 2]))
-            S = S / jnp.sqrt(jnp.linalg.det(R))
-            S = S + jnp.diag(self.variance)
-            S = S - M @ jnp.transpose(M)
-
-            return jnp.transpose(M), S, jnp.transpose(V)
-
-        iK, beta = calculate_factorisations(q, data)
-        yeyo = predict_given_factorizations(new_data.X, s, data_x - m, iK, beta, data)
-
-    # @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,))
     def get_post_mu_cov(self, XNew, params, train_data, full_cov=False):  # TODO if no data then return the prior mu and var
-        data = self._adjust_dataset(train_data.X, train_data.y)
-
-        # turns dataset of data_points, num_features into data_points * num_outputs, num_features + (num_outputs - 1)
-        # TODO generalise the above thing to make it actually work with n number of outputs
+        data = self._adjust_dataset(train_data)
 
         likelihood = self.likelihood_builder(data.n)
-        posterior = self.prior * likelihood
 
-        graphdef, state = nnx.split(posterior)
+        graphdef, state = nnx.split(self.prior * likelihood)
         opt_posterior = nnx.merge(graphdef, params["train_state"])
 
-        XNew3D = self._adjust_dataset(XNew, jnp.zeros((XNew.shape[0], 2)))  # TODO separate this to be just X aswell
+        XNew3D = self._adjust_dataset(gpjax.Dataset(XNew, jnp.zeros((XNew.shape[0], 2))))  # TODO separate this to be just X aswell
 
         latent_dist = opt_posterior.predict(XNew3D.X, data)
         mu = latent_dist.mean()  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
         mu = mu.reshape(-1, self.obs_dim) # TODO is this correct?
 
-        if full_cov:
-            cov = latent_dist.covariance()
-            std = jnp.expand_dims(cov, axis=0)  # cov.reshape((XNew.shape[0], -1))  # TODO a dodgy fix
-        else:
-            std = latent_dist.stddev()
-            std = std.reshape(-1, self.obs_dim) # TODO is this correct?
-        # TODO is there a way to jaxify this at some point? The issue is the shapes are different so don't think it is possible
+        std = latent_dist.stddev()
+        std = std.reshape(-1, self.obs_dim) # TODO is this correct?
 
         return mu, std
 
-    # def get_post_mu_full_cov(self, XNew, params, train_data, full_cov=False):  # TODO if no data then return the prior mu and var
-    #     data = self._adjust_dataset(train_data.X, train_data.y)
-    #
-    #     # turns dataset of data_points, num_features into data_points * num_outputs, num_features + (num_outputs - 1)
-    #     # TODO generalise the above thing to make it actually work with n number of outputs
-    #
-    #     likelihood = gpjax.likelihoods.Gaussian(num_datapoints=data.n, obs_stddev=gpjax.parameters.Static(jnp.array(1e-6)))
-    #     posterior = self.prior * likelihood
-    #
-    #     graphdef, state = nnx.split(posterior)
-    #     opt_posterior = nnx.merge(graphdef, params["train_state"])
-    #
-    #     XNew3D = self._adjust_dataset(XNew, jnp.zeros((XNew.shape[0], 2)))  # TODO separate this to be just X aswell
-    #
-    #     latent_dist = opt_posterior.predict(XNew3D.X, data)
-    #     mu = latent_dist.mean()  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
-    #     cov = latent_dist.covariance()
-    #
-    #     mu = mu.reshape((XNew.shape[0], -1))  # TODO a dodgy fix, is this correct?
-    #     cov = jnp.expand_dims(cov, axis=0)  # cov.reshape((XNew.shape[0], -1))  # TODO a dodgy fix
-    #
-    #     return mu, cov
+    @partial(jax.jit, static_argnums=(0,))
+    def get_post_mu_fullcov(self, XNew, params, train_data, full_cov=False):  # TODO if no data then return the prior mu and var
+        data = self._adjust_dataset(train_data)
+
+        likelihood = self.likelihood_builder(data.n)
+
+        graphdef, state = nnx.split(self.prior * likelihood)
+        opt_posterior = nnx.merge(graphdef, params["train_state"])
+
+        XNew3D = self._adjust_dataset(gpjax.Dataset(XNew, jnp.zeros((XNew.shape[0], 2))))  # TODO separate this to be just X aswell
+
+        latent_dist = opt_posterior.predict(XNew3D.X, data)
+        mu = latent_dist.mean()  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
+        mu = mu.reshape(-1, self.obs_dim) # TODO is this correct?
+
+        cov = latent_dist.covariance()
+        cov = jnp.expand_dims(cov, axis=0)  # cov.reshape((XNew.shape[0], -1))  # TODO a dodgy fix
+
+        return mu, cov
 
     @partial(jax.jit, static_argnums=(0,))
     def get_post_mu_cov_samples(self, XNew, params, train_data, key, full_cov=False):
-        data = self._adjust_dataset(train_data.X, train_data.y)
-
-        # turns dataset of data_points, num_features into data_points * num_outputs, num_features + (num_outputs - 1)
-        # TODO generalise the above thing to make it actually work with n number of outputs
+        data = self._adjust_dataset(train_data)
 
         likelihood = self.likelihood_builder(data.n)
         posterior = self.prior * likelihood
@@ -308,9 +181,11 @@ class MOGPGPJax(DynamicsModelBase):
         graphdef, state = nnx.split(posterior)
         opt_posterior = nnx.merge(graphdef, params["train_state"])
 
-        XNew3D = self._adjust_dataset(XNew, jnp.zeros((XNew.shape[0], 2)))  # TODO separate this to be just X aswell
+        XNew3D = self._adjust_dataset(gpjax.Dataset(XNew, jnp.zeros((XNew.shape[0], 2))))  # TODO separate this to be just X aswell
 
         latent_dist = opt_posterior.predict(XNew3D.X, data)
-        samples = latent_dist.sample(key, (1,))
+        key, _key = jrandom.split(key)
+        samples = latent_dist.sample(_key, (1,))
+        # samples = latent_dist.sample(params["sample_key"], (1,))
 
         return samples

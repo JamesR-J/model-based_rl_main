@@ -7,6 +7,7 @@ from project_name.agents.MPC import MPCAgent
 from project_name import dynamics_models
 from jaxtyping import Float, install_import_hook
 from project_name import utils
+from flax import nnx
 
 with install_import_hook("gpjax", "beartype.beartype"):
     import gpjax
@@ -24,7 +25,7 @@ class TIPAgent(MPCAgent):
 
     def make_postmean_func_const_key(self):
         def _postmean_fn(x, unused1, unused2, train_state, train_data, key):
-            mu = self.dynamics_model.get_post_mu_cov_samples(x, train_state, train_data, train_state["sample_key"], full_cov=False)
+            mu = self.dynamics_model.get_post_mu_cov_samples(x, train_state, train_data, key, full_cov=False)
             return jnp.squeeze(mu, axis=0)
         return _postmean_fn
 
@@ -110,14 +111,14 @@ class TIPAgent(MPCAgent):
 
         # TODO this part is the acquisition function so should be generalised at some point rather than putting it here
         # get posterior covariance for x_set
-        _, post_cov = self.dynamics_model.get_post_mu_cov(x_list_SOPA, train_state, train_data, full_cov=True)
+        _, post_cov = self.dynamics_model.get_post_mu_fullcov(x_list_SOPA, train_state, train_data, full_cov=True)
 
         # get posterior covariance for all exe_paths, so this be a vmap probably
         def _get_sample_cov(x_list_SOPA, exe_path_SOPA, params):
             # params["train_data_x"] = jnp.concatenate((params["train_data_x"], exe_path_SOPA["exe_path_x"]))
             # params["train_data_y"] = jnp.concatenate((params["train_data_y"], exe_path_SOPA["exe_path_y"]))
             new_dataset = train_data + gpjax.Dataset(exe_path_SOPA["exe_path_x"], exe_path_SOPA["exe_path_y"])
-            return self.dynamics_model.get_post_mu_cov(x_list_SOPA, params, new_dataset, full_cov=True)
+            return self.dynamics_model.get_post_mu_fullcov(x_list_SOPA, params, new_dataset, full_cov=True)
         # TODO this is fairly slow as it feeds in a large amount of gp data to get the sample cov
         # TODO can we speed this up?
 
@@ -135,6 +136,29 @@ class TIPAgent(MPCAgent):
         acq = fast_acq_exe_normal(jnp.expand_dims(post_cov, axis=0), samp_cov)
 
         return acq
+
+    @partial(jax.jit, static_argnums=(0, 1, 6, 7))
+    def execute_mpc_next_point(self, f, obs, train_state, split_data, key, horizon, actions_per_plan):
+        train_data = gpjax.Dataset(split_data[0], split_data[1])
+
+        adj_data = self.dynamics_model._adjust_dataset(train_data)
+
+        likelihood = self.dynamics_model.likelihood_builder(adj_data.n)
+        posterior = self.dynamics_model.prior * likelihood
+
+        graphdef, state = nnx.split(posterior)
+        opt_posterior = nnx.merge(graphdef, train_state["train_state"])
+
+        key, _key = jrandom.split(key)
+        sample_func = dynamics_models.adj_sample_approx(opt_posterior, num_samples=1, train_data=adj_data, key=_key, num_features=500)
+
+        full_path, output, sample_returns = self.run_algorithm_on_f(sample_func, obs, train_state, train_data, key, horizon, actions_per_plan)
+
+        action = output[1]
+
+        exe_path = self.get_exe_path_crop(output[0], output[1])
+
+        return action, exe_path, output
 
     # @partial(jax.jit, static_argnums=(0,))
     def get_next_point(self, curr_obs, train_state, train_data, step_idx, key):

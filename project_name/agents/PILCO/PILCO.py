@@ -16,6 +16,7 @@ from flax.training.train_state import TrainState
 import flax.linen as nn
 import GPJax_AScannell as gpjaxas
 from jaxtyping import Float, install_import_hook
+from functools import partial
 
 with install_import_hook("gpjax", "beartype.beartype"):
     import logging
@@ -43,9 +44,6 @@ class PILCOAgent(AgentBase):
         self.agent_config = get_PILCO_config()
 
         # TODO add some import from folder check thingo
-        # self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
-        # self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
-        # self.dynamics_model = dynamics_models.MOSVGP(env, env_params, config, self.agent_config, key)
         self.dynamics_model = dynamics_models.MOSVGPGPJax(env, env_params, config, self.agent_config, key)
 
         self.obs_dim = len(self.env.observation_space(self.env_params).low)
@@ -188,7 +186,7 @@ class PILCOAgent(AgentBase):
         action_1A = self.controller.apply(train_state["controller_train_state"].params, curr_obs_O[None, :], jnp.zeros((self.obs_dim, self.obs_dim)))[0]
 
         if (step_idx + 1) // self.agent_config.PLANNING_HORIZON:
-            dynamics_train_state = self.dynamics_model.optimise(train_data, train_state["dynamics_train_state"])
+            dynamics_train_state = self.dynamics_model.optimise_gp(train_data, train_state["dynamics_train_state"], key)
 
             kernel = gpjaxas.kernels.SeparateIndependent(
                 [gpjaxas.kernels.SquaredExponential(lengthscales=dynamics_train_state[0]["kernel"]["lengthscales"][idx],
@@ -208,6 +206,11 @@ class PILCOAgent(AgentBase):
         # TODO can we jax the assertion?
 
         return x_next_OPA, exe_path, curr_obs_O, train_state, None, key
+
+    @partial(jax.jit, static_argnums=(0,))
+    def evaluate(self, start_obs, start_env_state, train_state, sep_data, key):
+        # TODO sort this out at some point
+        return
 
 
 

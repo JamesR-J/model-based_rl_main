@@ -136,6 +136,7 @@ def independent_output_conditional(
     """Multi-output GP conditional where outputs are assumed independent."""
     Kmm = (kernel(kernel_params, X, X) + jnp.eye(X.shape[-2], dtype=X.dtype) * default_jitter())  # [P, M, M]
     Kmm = Kmm + jnp.eye(X.shape[-2], dtype=X.dtype) * likelihood_params["variance"]  # [P, M, M]
+    # TODO if i turn off the above it then works, but it doesn't optimise, the vice versa is true
     Kmn = kernel(kernel_params, X, Xnew)  # [P, M, N]
     Knn = kernel(kernel_params, Xnew, full_cov=full_cov)  # [P, N, N] or [N, P]
 

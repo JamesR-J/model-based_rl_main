@@ -121,7 +121,7 @@ def run_train(config):
     # this runs the main loop of learning
     def _main_loop(curr_obs_O, train_data, train_state, env_state, key):
         global_returns = 0
-        for step_idx in range(config.NUM_ITERS):
+        for step_idx in range(0, config.NUM_ITERS):
             # log some info that we need basically
             step_start_time = time.time()
             logging.info("---" * 5 + f" Start iteration i={step_idx} " + "---" * 5)
@@ -137,37 +137,11 @@ def run_train(config):
                                                                                                key)
 
             # periodically run evaluation and plot
-            if (step_idx % config.EVAL_FREQ == 0 or step_idx + 1 == config.NUM_ITERS) and actor.agent_config.ROLLOUT_SAMPLING:
-                def _eval_trial(start_obs, start_env_state, key):
-                    def _env_step(env_runner_state, unused):
-                        obs_O, env_state, key = env_runner_state
-                        key, _key = jrandom.split(key)
-                        action_1A, _, _ = actor.execute_mpc(actor.make_postmean_func(), obs_O, train_state, (train_data.X, train_data.y),
-                                                            _key, horizon=1, actions_per_plan=1)
-                        action_A = jnp.squeeze(action_1A, axis=0)
-                        key, _key = jrandom.split(key)
-                        nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
-                        return (nobs_O, new_env_state, key), (nobs_O, reward, action_A)
-
-                    key, _key = jrandom.split(key)
-                    _, (nobs_SO, real_rewards_S, real_actions_SA) = jax.lax.scan(_env_step, (start_obs, start_env_state, _key), None, env_params.horizon)
-                    real_obs_SP1O = jnp.concatenate((jnp.expand_dims(start_obs, axis=0), nobs_SO))
-                    real_returns_1 = actor._compute_returns(jnp.expand_dims(real_rewards_S, axis=0))  # TODO sort this out at some point
-                    real_path_x_SOPA = jnp.concatenate((real_obs_SP1O[:-1], real_actions_SA), axis=-1)
-                    real_path_y_SO = real_obs_SP1O[1:] - real_obs_SP1O[:-1]
-                    key, _key = jrandom.split(key)
-                    real_path_y_hat_SO = actor.make_postmean_func2()(real_path_x_SOPA, None, None, train_state,
-                                                                     train_data, _key)
-                    # TODO unsure how to fix the above
-                    mse = 0.5 * jnp.mean(jnp.sum(jnp.square(real_path_y_SO - real_path_y_hat_SO), axis=1))
-
-                    return (RealPath(x=real_path_x_SOPA, y=real_path_y_SO, y_hat=real_path_y_hat_SO),
-                            jnp.squeeze(real_returns_1), jnp.mean(real_returns_1), jnp.std(real_returns_1), jnp.mean(mse))
-
+            if (step_idx % config.EVAL_FREQ == 0 or step_idx + 1 == config.NUM_ITERS):
                 key, _key = jrandom.split(key)
                 batch_key = jrandom.split(_key, config.NUM_EVAL_TRIALS)
                 start_obs, start_env_state = utils.get_start_obs(env, env_params, key)
-                real_paths_mpc, real_returns, mean_returns, std_returns, mse = jax.vmap(_eval_trial, in_axes=(None, None, 0))(start_obs, start_env_state, batch_key)
+                real_paths_mpc, real_returns, mean_returns, std_returns, mse = jax.vmap(actor.evaluate, in_axes=(None, None, None, None, 0))(start_obs, start_env_state, train_state, (train_data.X, train_data.y), batch_key)
                 logging.info(f"Eval Returns = {real_returns}; Mean = {jnp.mean(mean_returns):.2f}; "
                              f"Std = {jnp.std(std_returns):.2f}")  # TODO check the std
                 logging.info(f"Model MSE = {jnp.mean(mse):.2f}")

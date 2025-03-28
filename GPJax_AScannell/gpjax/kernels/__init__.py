@@ -6,6 +6,7 @@ from GPJax_AScannell.gpjax.kernels.stationaries import (
     Stationary,
     Rectangle,
 )
+from GPJax_AScannell.gpjax.kernels.linears import Linear
 
 RBF = SquaredExponential
 
