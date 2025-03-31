@@ -203,9 +203,17 @@ def make_plots(plot_fn, domain, true_path, data, env, env_params, config, exe_pa
         ax_all, fig_all = plot_fn(true_path, ax_all, fig_all, domain, "true")
     if ax_all is None:
         return
+
+    init_data = jax.tree_util.tree_map(lambda x: x[:config.NUM_INIT_DATA], data)
+    data = jax.tree_util.tree_map(lambda x: x[config.NUM_INIT_DATA:], data)
+
+    # Plot init observations
+    init_x_obs = make_plot_obs(init_data.x, env, env_params, config.NORMALISE_ENV)
+    scatter(ax_all, init_x_obs, color="grey", s=10, alpha=0.2)
+
     # Plot observations
     x_obs = make_plot_obs(data.x, env, env_params, config.NORMALISE_ENV)
-    scatter(ax_all, x_obs, color="grey", s=10, alpha=0.3)
+    scatter(ax_all, x_obs, color="green", s=10, alpha=0.4)
     plot(ax_obs, x_obs, "o", color="k", ms=1)
 
     # Plot execution path posterior samples

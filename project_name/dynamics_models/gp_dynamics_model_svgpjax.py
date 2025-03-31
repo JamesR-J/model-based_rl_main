@@ -29,8 +29,8 @@ import tensorflow_probability.substrates.jax as tfp
 
 class SeparateIndependent(gpjax.kernels.stationary.StationaryKernel):
     def __init__(self, lengthscale1, lengthscale2, variance1, variance2):
-        self.kernel0 = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=lengthscale1, variance=variance1)
-        self.kernel1 = gpjax.kernels.RBF(active_dims=[0, 1, 2], lengthscale=lengthscale2, variance=variance2)
+        self.kernel0 = gpjax.kernels.Matern52(active_dims=[0, 1, 2], lengthscale=lengthscale1, variance=variance1)
+        self.kernel1 = gpjax.kernels.Matern52(active_dims=[0, 1, 2], lengthscale=lengthscale2, variance=variance2)
         super().__init__(n_dims=3, compute_engine=gpjax.kernels.computations.DenseKernelComputation())
 
     def __call__(self, X: Float[Array, "1 D"], Xp: Float[Array, "1 D"]) -> Float[Array, "1"]:
@@ -62,19 +62,24 @@ class MOSVGPGPJax(DynamicsModelBase):
         high = jnp.concatenate([env.observation_space(env_params).high,
                                 jnp.expand_dims(jnp.array(env.action_space(env_params).high), axis=0)])
         # TODO this is general maybe can put somewhere else
-        z = low + (high - low) * samples
-        z = self._adjust_dataset(gpjax.Dataset(z, jnp.zeros((z.shape[0], self.obs_dim))))
+        self.og_z = low + (high - low) * samples
+        self.z = self._adjust_dataset(gpjax.Dataset(self.og_z, jnp.zeros((self.og_z.shape[0], self.obs_dim))))
 
-        kernel = SeparateIndependent(lengthscale1 = jnp.array((2.81622296,   9.64035469, 142.60660018)),
-                                     lengthscale2 = jnp.array((0.92813981, 280.24169475,  14.85778016)),
-                                     variance1 = jnp.array((0.78387795)),
-                                     variance2 = jnp.array((0.22877621)))
+        # kernel = SeparateIndependent(lengthscale1 = jnp.array((2.81622296,   9.64035469, 142.60660018)),
+        #                              lengthscale2 = jnp.array((0.92813981, 280.24169475,  14.85778016)),
+        #                              variance1 = jnp.array((0.78387795)),
+        #                              variance2 = jnp.array((0.22877621)))
+
+        kernel = SeparateIndependent(lengthscale1=jnp.ones((3,)),
+                                     lengthscale2=jnp.ones((3,)),
+                                     variance1=1.0,
+                                     variance2=1.0)
 
         # mean = gpjax.mean_functions.Zero()
         mean = gpjax.mean_functions.Constant(jnp.array((0.07455202985890419)))
         prior = gpjax.gps.Prior(mean_function=mean, kernel=kernel)
         self.variational_posterior_builder = lambda n: gpjax.variational_families.VariationalGaussian(posterior=prior * gpjax.likelihoods.Gaussian(num_datapoints=n,
-                                                                       obs_stddev=gpjax.parameters.PositiveReal(jnp.array(0.005988507226896687))), inducing_inputs=z.X)
+                                                                       obs_stddev=gpjax.parameters.PositiveReal(jnp.array(0.005988507226896687))), inducing_inputs=self.z.X)
 
 
     def create_train_state(self, init_data_x, init_data_y, key):
@@ -107,6 +112,8 @@ class MOSVGPGPJax(DynamicsModelBase):
         params = self.create_train_state(pretrain_data_x, pretrain_data_y, key)
         opt_posterior = self.optimise_gp(data, params, key)
 
+        # TODO should we make this a randomised beginning and couple of restarts or is this done natively in gpjax?
+
         lengthscales = {}
         variances = {}
         for i in range(self.obs_dim):
@@ -125,6 +132,7 @@ class MOSVGPGPJax(DynamicsModelBase):
 
         return opt_posterior
 
+    # TODO does this also need to be different to respect the moment matching nature?
     @partial(jax.jit, static_argnums=(0,))
     def optimise_gp(self, opt_data, params, key):
         key, _key = jrandom.split(key)
@@ -134,18 +142,18 @@ class MOSVGPGPJax(DynamicsModelBase):
         graphdef, state = nnx.split(q)
         q = nnx.merge(graphdef, params["train_state"])
 
-        schedule = optax.warmup_cosine_decay_schedule(init_value=0.0,
-                                                   peak_value=0.02,
-                                                   warmup_steps=75,
-                                                   decay_steps=2000,
-                                                   end_value=0.001)
-        # TODO idk if we need the above
+        # schedule = optax.warmup_cosine_decay_schedule(init_value=0.0,
+        #                                               peak_value=0.02,
+        #                                               warmup_steps=75,
+        #                                               decay_steps=2000,
+        #                                               end_value=0.001)
+        # # TODO idk if we need the above
 
         opt_posterior, _ = gpjax.fit(model=q,
                                      objective=lambda p, d: -gpjax.objectives.elbo(p, d),
                                      train_data=data,
-                                     # optim=optax.adam(learning_rate=self.agent_config.GP_LR),
-                                     optim=optax.adam(learning_rate=schedule),
+                                     optim=optax.adam(learning_rate=self.agent_config.GP_LR),
+                                     # optim=optax.adam(learning_rate=schedule),
                                      num_iters=self.agent_config.TRAIN_GP_NUM_ITERS,
                                      batch_size=128,
                                      safe=True,
@@ -214,7 +222,8 @@ class MOSVGPGPJax(DynamicsModelBase):
 
         return samples
 
-    def predict_on_noisy_inputs(self, m, s, params, train_data):   # TODO Idk if even nee this
+    @partial(jax.jit, static_argnums=(0,))
+    def get_post_mu_fullcov2(self, m, s, params, train_data):  # TODO if no data then return the prior mu and var
         data = self._adjust_dataset(train_data)
 
         q = self.variational_posterior_builder(data.n)
@@ -222,89 +231,108 @@ class MOSVGPGPJax(DynamicsModelBase):
         graphdef, state = nnx.split(q)
         opt_posterior = nnx.merge(graphdef, params["train_state"])
 
-        # XNew3D = self._adjust_dataset(XNew, jnp.zeros((XNew.shape[0], 2)))  # TODO separate this to be just X aswell
+        XNew3D = self._adjust_dataset(gpjax.Dataset(m, jnp.zeros((m.shape[0], 2))))  # TODO separate this to be just X aswell
 
-        trial_data = gpjax.Dataset(jnp.ones((160, 3)), jnp.ones((160, 2)))
-        data = self._adjust_dataset(trial_data)  # TODO how do we do this if using the gpjax dataset all the time?
-        new_data = self._adjust_dataset(gpjax.Dataset(m, jnp.zeros((m.shape[0], 2))))
+        latent_dist = opt_posterior.predict(XNew3D.X)
+        mu = latent_dist.mean()  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
+        mu = mu.reshape(-1, self.obs_dim)  # TODO is this correct?
 
-        iK, beta = self._calculate_factorisations(opt_posterior.posterior, data)
-        yeyo = self._predict_given_factorizations(new_data.X, s,  iK, beta, data)
+        cov = latent_dist.covariance()
+        cov = jnp.expand_dims(cov, axis=0)  # cov.reshape((XNew.shape[0], -1))  # TODO a dodgy fix
 
-    # @partial(jax.jit, static_argnums=(0,))
-    def _calculate_factorisations(self, posterior, data):
-        K = posterior.prior.kernel.gram(data.X).A
-        obs_noise = posterior.likelihood.obs_stddev.value**2
-        eye = jnp.eye(jnp.shape(data.X)[0])
-        L = jsp.linalg.cho_factor(K + eye * obs_noise * posterior.jitter, lower=True)  # TODO do we need the posterior.jitter?
+        return mu, cov
+
+    @partial(jax.jit, static_argnums=(0,))
+    def predict_on_noisy_inputs(self, m, s, params, train_data):   # TODO Idk if even nee this
+        adj_data = self._adjust_dataset(train_data)
+
+        q = self.variational_posterior_builder(adj_data.n)
+
+        graphdef, state = nnx.split(q)
+        opt_posterior = nnx.merge(graphdef, params["train_state"])
+
+        K = opt_posterior.posterior.prior.kernel.gram(adj_data.X).A
+        obs_noise = opt_posterior.posterior.likelihood.obs_stddev.value ** 2
+        eye = jnp.eye(jnp.shape(adj_data.X)[0])
+        L = jsp.linalg.cho_factor(K + eye * obs_noise * opt_posterior.posterior.jitter, lower=True)
+        # TODO do we need the posterior.jitter?
         iK = jsp.linalg.cho_solve(L, eye)
-        beta = jsp.linalg.cho_solve(L, data.y)[:, 0]
-        return iK, beta
+        beta = jsp.linalg.cho_solve(L, adj_data.y)
 
-    # @partial(jax.jit, static_argnums=(0,))
-    def _predict_given_factorizations(self, m, s, iK, beta, data):
+        m, s, c = self._predict_given_factorisations(m, s,  iK, beta, train_data, params)
+        return m, s, c
+
+    @partial(jax.jit, static_argnums=(0,))
+    def _predict_given_factorisations(self, m, s, iK, beta, unadj_data, params):
         """
         Approximate GP regression at noisy inputs via moment matching
         IN: mean (m) (row vector) and (s) variance of the state
         OUT: mean (M) (row vector), variance (S) of the action
              and inv(s)*input-ouputcovariance
         """
+        s = jnp.tile(s[None, None, :, :], [self.output_dim, self.output_dim, 1, 1])  # 2, 2, 3, 3
+        inp = jnp.tile(self._centralised_input(unadj_data.X, m)[None, :, :], [self.output_dim, 1, 1])
+
+        lengthscales = jnp.concatenate((jnp.expand_dims(params["train_state"]["posterior"]["prior"]["kernel"]["kernel0"]["lengthscale"].value, axis=0),
+                                        jnp.expand_dims(params["train_state"]["posterior"]["prior"]["kernel"]["kernel0"]["lengthscale"].value, axis=0)))
+        variance = jnp.concatenate((jnp.expand_dims(params["train_state"]["posterior"]["prior"]["kernel"]["kernel0"]["variance"].value, axis=0),
+                                    jnp.expand_dims(params["train_state"]["posterior"]["prior"]["kernel"]["kernel0"]["variance"].value, axis=0)))
+        # TODO generalise the above
+
         # Calculate M and V: mean and inv(s) times input-output covariance
-        iL = objax.Vectorize(lambda x: jnp.diag(x, k=0), objax.VarCollection())(
-            1 / self.lengthscales
-        )
+        iL = jax.vmap(lambda x: jnp.diag(x, k=0))(1 / lengthscales)
         iN = inp @ iL
-        B = iL @ s[0, ...] @ iL + jnp.eye(self.num_dims)
+        B = iL @ s[0, ...] @ iL + jnp.eye(self.input_dim)
 
         # Redefine iN as in^T and t --> t^T
         # B is symmetric so its the same
-        t = jnp.transpose(
-            jnp.linalg.solve(B, jnp.transpose(iN, axes=(0, 2, 1))),
-            axes=(0, 2, 1),
-        )
+        t = jnp.transpose(jnp.linalg.solve(B, jnp.transpose(iN, axes=(0, 2, 1))), axes=(0, 2, 1))
+
+        def reformat_iK(matrix, k=2):
+            matrix1 = matrix[::k, ::k]
+            matrix2 = matrix[1::k, 1::k]
+            return jnp.concatenate((jnp.expand_dims(matrix1, axis=0), jnp.expand_dims(matrix2, axis=0)), axis=0)
+
+        beta = beta.flatten().reshape(-1, self.output_dim).T
+        # TODO the above is correct definitley for output size of 2, need to ensure for other otuputdims
+        iK = reformat_iK(iK, self.output_dim)
+        # TODO above is fine for 2d output but need to scale to larger sizes
 
         lb = jnp.exp(-0.5 * jnp.sum(iN * t, -1)) * beta
         tiL = t @ iL
-        c = self.variance / jnp.sqrt(jnp.linalg.det(B))
+        c = variance / jnp.sqrt(jnp.linalg.det(B))
 
         M = (jnp.sum(lb, -1) * c)[:, None]
         V = (jnp.transpose(tiL, axes=(0, 2, 1)) @ lb[:, :, None])[..., 0] * c[:, None]
 
         # Calculate S: Predictive Covariance
-        z = objax.Vectorize(objax.Vectorize(lambda x: jnp.diag(x, k=0), objax.VarCollection()), objax.VarCollection())(
-            1.0 / jnp.square(self.lengthscales[None, :, :])
-            + 1.0 / jnp.square(self.lengthscales[:, None, :])
-        )
+        z = jax.vmap(jax.vmap(lambda x: jnp.diag(x, k=0)))(
+            1.0 / jnp.square(lengthscales[None, :, :]) + 1.0 / jnp.square(lengthscales[:, None, :]))
 
-        R = (s @ z) + jnp.eye(self.num_dims)
+        R = (s @ z) + jnp.eye(self.obs_dim + self.action_dim)
 
-        X = inp[None, :, :, :] / jnp.square(self.lengthscales[:, None, None, :])
-        X2 = -inp[:, None, :, :] / jnp.square(self.lengthscales[None, :, None, :])
+        X = inp[None, :, :, :] / jnp.square(lengthscales[:, None, None, :])
+        X2 = -inp[:, None, :, :] / jnp.square(lengthscales[None, :, None, :])
         Q = 0.5 * jnp.linalg.solve(R, s)
         maha = (X - X2) @ Q @ jnp.transpose(X - X2, axes=(0, 1, 3, 2))
 
-        k = jnp.log(self.variance)[:, None] - 0.5 * jnp.sum(jnp.square(iN), -1)
+        k = jnp.log(variance)[:, None] - 0.5 * jnp.sum(jnp.square(iN), -1)
         L = jnp.exp(k[:, None, :, None] + k[None, :, None, :] + maha)
         S = (
-                    jnp.tile(beta[:, None, None, :], [1, self.num_outputs, 1, 1])
+                    jnp.tile(beta[:, None, None, :], [1, self.obs_dim, 1, 1])
                     @ L
-                    @ jnp.tile(beta[None, :, :, None], [self.num_outputs, 1, 1, 1])
+                    @ jnp.tile(beta[None, :, :, None], [self.obs_dim, 1, 1, 1])
             )[:, :, 0, 0]
 
-        diagL = jnp.transpose(
-            objax.Vectorize(
-                objax.Vectorize(lambda x: jnp.diag(x, k=0), objax.VarCollection()),
-                objax.VarCollection(),
-            )(jnp.transpose(L))
-        )
+        diagL = jnp.transpose(jax.vmap(jax.vmap(lambda x: jnp.diag(x, k=0)))(jnp.transpose(L)))
         S = S - jnp.diag(jnp.sum(jnp.multiply(iK, diagL), [1, 2]))
         S = S / jnp.sqrt(jnp.linalg.det(R))
-        S = S + jnp.diag(self.variance)
+        S = S + jnp.diag(variance)
         S = S - M @ jnp.transpose(M)
 
         return jnp.transpose(M), S, jnp.transpose(V)
 
-    # @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,))
     def _centralised_input(self, X, m):
         return X - m
 

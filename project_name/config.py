@@ -10,9 +10,11 @@ def get_config():
     config.NORMALISE_ENV = True
     config.GENERATIVE_ENV = True
     config.TELEPORT = True  # aka teleporting in the original thing
-    config.PRETRAIN_HYPERPARAMS = True
+    config.PRETRAIN_HYPERPARAMS = False  # True
     config.PRETRAIN_NUM_DATA = 1000
-    config.NUM_INIT_DATA = 1
+    config.NUM_INIT_DATA = 40 * 4  # 1
+
+    config.LEARN_REWARD = False
 
     config.SAVE_FIGURES = True
 
@@ -20,7 +22,7 @@ def get_config():
     config.NUM_EVAL_TRIALS = 5
     config.EVAL_FREQ = 10
 
-    config.NUM_ITERS = 51#0
+    config.NUM_ITERS = 250 + 1
 
     config.WANDB = "disabled"
     # config.WANDB = "online"

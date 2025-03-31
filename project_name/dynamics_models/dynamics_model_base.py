@@ -13,8 +13,12 @@ class DynamicsModelBase:  # TODO sort this oot
         self.agent_config = agent_config
 
         self.obs_dim = env.obs_dim
-        self.action_dim = self.env.action_space().shape[0]
+        self.action_dim = self.env.action_space(env_params).shape[0]
         self.input_dim = self.obs_dim + self.action_dim
+        if config.LEARN_REWARD:
+            self.output_dim = self.obs_dim + 1  # TODO is it just one?
+        else:
+            self.output_dim = self.obs_dim
 
     def create_train_state(self, init_data_x, init_data_y, key):
         raise NotImplementedError

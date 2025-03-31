@@ -345,6 +345,25 @@ class MPCAgent(AgentBase):
 
         return x_next_OPA, exe_path, curr_obs_O, train_state, None, key
 
+    @partial(jax.jit, static_argnums=(0, 2))
+    def execute_gt_mpc(self, init_obs, f, train_state, split_dataset, key):
+        init_dataset = gpjax.Dataset(split_dataset[0], split_dataset[1])
+        key, _key = jrandom.split(key)
+        full_path, test_mpc_data, all_returns = self.run_algorithm_on_f(f, init_obs, train_state, init_dataset, key,
+                                                                         horizon=self.env_params.horizon,
+                                                                         actions_per_plan=self.agent_config.ACTIONS_PER_PLAN)
+        path_lengths = len(full_path[0])  # TODO should we turn the output into a dict for x and y ?
+        true_path = self.get_exe_path_crop(test_mpc_data[0], test_mpc_data[1])
+
+        key, _key = jrandom.split(key)
+        test_points = jax.tree_util.tree_map(lambda x: jrandom.choice(_key, x,
+                                                                      (
+                                                                      self.config.TEST_SET_SIZE // self.config.NUM_EVAL_TRIALS,)),
+                                             true_path)
+        # TODO ensure it samples the same pairs
+
+        return true_path, test_points, path_lengths, all_returns
+
     @partial(jax.jit, static_argnums=(0,))
     def evaluate(self, start_obs, start_env_state, train_state, sep_data, key):
         train_data = gpjax.Dataset(sep_data[0], sep_data[1])

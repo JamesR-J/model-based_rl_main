@@ -1,3 +1,7 @@
+from .gymnax_pendulum import GymnaxPendulum
+from .gymnax_pilco_cartpole import GymnaxPilcoCartPole
+
+
 # import logging
 # from gymnasium.envs.registration import register
 # from project_name.envs.pilco_cartpole import CartPoleSwingUpEnv, pilco_cartpole_reward

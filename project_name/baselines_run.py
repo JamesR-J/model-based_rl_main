@@ -82,28 +82,18 @@ def run_train(config):
         train_state = actor.create_train_state(init_data_x, init_data_y, _key)
         # TODO how does the above work if there is no data, can we use the start obs and a randoma action or nothing?
 
-    @partial(jax.jit, static_argnums=(1,))
-    def execute_gt_mpc(init_obs, f, key):
-        key, _key = jrandom.split(key)
-        full_path, test_mpc_data, all_returns = actor.run_algorithm_on_f(f, init_obs, train_state, init_dataset, key,
-                                                                  horizon=env_params.horizon,
-                                                                  actions_per_plan=actor.agent_config.ACTIONS_PER_PLAN)
-        path_lengths = len(full_path[0])  # TODO should we turn the output into a dict for x and y ?
-        true_path = actor.get_exe_path_crop(test_mpc_data[0], test_mpc_data[1])
-
-        key, _key = jrandom.split(key)
-        test_points = jax.tree_util.tree_map(lambda x: jrandom.choice(_key, x,
-                                                                      (config.TEST_SET_SIZE // config.NUM_EVAL_TRIALS,)), true_path)
-        # TODO ensure it samples the same pairs
-
-        return true_path, test_points, path_lengths, all_returns
-
     if actor.agent_config.ROLLOUT_SAMPLING:
         # get some groundtruth data
         key, _key = jrandom.split(key)
         batch_key = jrandom.split(_key, config.NUM_EVAL_TRIALS)
         start_gt_time = time.time()
-        true_paths, test_points, path_lengths, all_returns = jax.vmap(execute_gt_mpc, in_axes=(None, None, 0))(start_obs, mpc_func, batch_key)
+        true_paths, test_points, path_lengths, all_returns = (jax.vmap(actor.execute_gt_mpc,
+                                                                      in_axes=(None, None, None, None, 0))
+                                                              (start_obs,
+                                                               mpc_func,
+                                                               train_state,
+                                                               (init_dataset.X, init_dataset.y),
+                                                               batch_key))
         logging.info(f"Ground truth time taken = {time.time() - start_gt_time:.2f}s; "
                      f"Mean Return = {jnp.mean(all_returns):.2f}; Std Return = {jnp.std(all_returns):.2f}; "
                      f"Mean Path Lengths = {jnp.mean(path_lengths)}; ")
@@ -117,6 +107,10 @@ def run_train(config):
         if fig_gt and config.SAVE_FIGURES:
             fig_gt.suptitle("Ground Truth Eval")
             neatplot.save_figure("figures/gt", "png", fig=fig_gt)
+    else:
+        true_paths = {"exe_path_x": jnp.zeros((1, 10, 3)),
+                      "exe_path_y": jnp.zeros((1, 10, 2))}
+        # TODO how can we give some groundtruth even if not using MPC?
 
     # this runs the main loop of learning
     def _main_loop(curr_obs_O, train_data, train_state, env_state, key):
@@ -166,26 +160,22 @@ def run_train(config):
                     # TODO sort the above out, it works when curr_obs doesn't change
                 else:
                     # raise NotImplementedError("When is it not rollout sampling?")
-
                     # TODO dodgy fix for now
-
                     nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
                     y_next_O = nobs_O - curr_obs_O
 
                     global_returns += reward
-                    logging.info(f"Iteration i={step_idx} Action: {action_A}")
-                    logging.info(f"Iteration i={step_idx} State : {nobs_O}")
-                    logging.info(f"iteration i={step_idx} Return so far: {global_returns}")
             else:
                 nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
                 y_next_O = nobs_O - curr_obs_O
 
                 global_returns += reward
-                logging.info(f"Iteration i={step_idx} Action: {action_A}")
-                logging.info(f"Iteration i={step_idx} State : {nobs_O}")
-                logging.info(f"iteration i={step_idx} Return so far: {global_returns}")
                 # TODO should the above be for both?
             # the above should match
+
+            logging.info(f"Iteration i={step_idx} Action: {action_A}")
+            logging.info(f"Iteration i={step_idx} State : {nobs_O}")
+            logging.info(f"iteration i={step_idx} Return so far: {global_returns}")
 
             train_data = train_data + gpjax.Dataset(X=jnp.expand_dims(x_next_OPA, axis=0), y=jnp.expand_dims(y_next_O, axis=0))
             # TODO will the above work with PETS as well?
