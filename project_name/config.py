@@ -10,8 +10,8 @@ def get_config():
     config.NORMALISE_ENV = True
     config.GENERATIVE_ENV = True
     config.TELEPORT = True  # aka teleporting in the original thing
-    config.PRETRAIN_HYPERPARAMS = False  # True
-    config.PRETRAIN_NUM_DATA = 1000
+    config.PRETRAIN_HYPERPARAMS = True
+    config.PRETRAIN_NUM_DATA = 10#00
     config.NUM_INIT_DATA = 40 * 4  # 1
 
     config.LEARN_REWARD = False

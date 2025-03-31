@@ -19,6 +19,17 @@ from jaxtyping import Float, install_import_hook
 from functools import partial
 from project_name import utils
 from flax import nnx
+from gpjax.parameters import (
+    DEFAULT_BIJECTION,
+    Parameter,
+    transform,
+)
+from gpjax.dataset import Dataset
+from gpjax.typing import (
+    Array,
+    KeyArray,
+    ScalarFloat,
+)
 
 with install_import_hook("gpjax", "beartype.beartype"):
     import logging
@@ -96,20 +107,42 @@ class PILCOAgent(AgentBase):
         train_state = self.create_train_state(init_data_x, init_data_y, key)
         train_state["dynamics_train_state"] = self.dynamics_model.pretrain_params(init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key)
 
+        data = gpjax.Dataset(pretrain_data_x, pretrain_data_y)
+        train_state["dynamics_train_state"] = self._optimise_gp(data, train_state, key)
+
         # controller optimisation
         pretrain_data = gpjax.Dataset(pretrain_data_x, pretrain_data_y)
         train_state = self._optimise_policy(train_state, pretrain_data, key)
 
         return train_state
 
-    @partial(jax.jit, static_argnums=(0,))
-    def _optimise_gp(self, opt_data, params, key):
+    def get_batch(self, train_data: Dataset, batch_size: int, key: KeyArray) -> Dataset:
+        """Batch the data into mini-batches. Sampling is done with replacement.
+
+        Args:
+            train_data (Dataset): The training dataset.
+            batch_size (int): The batch size.
+            key (KeyArray): The random key to use for the batch selection.
+
+        Returns
+        -------
+            Dataset: The batched dataset.
+        """
+        x, y, n = train_data.X, train_data.y, train_data.n
+
+        # Subsample mini-batch indices with replacement.
+        indices = jrandom.choice(key, n, (batch_size,), replace=True)
+
+        return Dataset(X=x[indices], y=y[indices])
+
+    # @partial(jax.jit, static_argnums=(0,))
+    def _optimise_gp(self, opt_data, train_state, key):
         key, _key = jrandom.split(key)
         data = self.dynamics_model._adjust_dataset(opt_data)
         q = self.dynamics_model.variational_posterior_builder(data.n)
 
         graphdef, state = nnx.split(q)
-        q = nnx.merge(graphdef, params["train_state"])
+        q = nnx.merge(graphdef, train_state["dynamics_train_state"]["train_state"])
 
         # schedule = optax.warmup_cosine_decay_schedule(init_value=0.0,
         #                                               peak_value=0.02,
@@ -117,17 +150,67 @@ class PILCOAgent(AgentBase):
         #                                               decay_steps=2000,
         #                                               end_value=0.001)
         # # TODO idk if we need the above
+        #
+        # opt_posterior, _ = gpjax.fit(model=q,
+        #                              objective=lambda p, d: -gpjax.objectives.elbo(p, d),
+        #                              train_data=data,
+        #                              optim=optax.adam(learning_rate=self.agent_config.GP_LR),
+        #                              # optim=optax.adam(learning_rate=schedule),
+        #                              num_iters=self.agent_config.TRAIN_GP_NUM_ITERS,
+        #                              batch_size=128,
+        #                              safe=True,
+        #                              key=_key,
+        #                              verbose=False)
 
-        opt_posterior, _ = gpjax.fit(model=q,
-                                     objective=lambda p, d: -gpjax.objectives.elbo(p, d),
-                                     train_data=data,
-                                     optim=optax.adam(learning_rate=self.agent_config.GP_LR),
-                                     # optim=optax.adam(learning_rate=schedule),
-                                     num_iters=self.agent_config.TRAIN_GP_NUM_ITERS,
-                                     batch_size=128,
-                                     safe=True,
-                                     key=_key,
-                                     verbose=False)
+        train_data = opt_data
+        optim = optax.adam(learning_rate=self.agent_config.GP_LR)
+        objective = lambda dp, cp, rp, d: -self._training_loss(dp, cp, rp, d)
+        num_iters = self.agent_config.TRAIN_GP_NUM_ITERS
+        batch_size = 128
+        unroll = 1
+
+        graphdef, params, *static_state = nnx.split(q, Parameter, ...)
+
+        # Parameters bijection to unconstrained space
+        params = transform(params, DEFAULT_BIJECTION, inverse=True)
+
+        # Loss definition
+        def loss(params: nnx.State, batch: Dataset) -> ScalarFloat:
+            params = transform(params, DEFAULT_BIJECTION)
+            model = nnx.merge(graphdef, params, *static_state)
+            return objective(model, train_state["controller_train_state"].params, train_state["reward_train_state"].params, batch)
+            # return objective(params, train_state["controller_train_state"].params, train_state["reward_train_state"].params, batch)
+
+        # Initialise optimiser state.
+        opt_state = optim.init(params)
+
+        # Mini-batch random keys to scan over.
+        iter_keys = jrandom.split(key, num_iters)
+
+        # Optimisation step.
+        def step(carry, key):
+            params, opt_state = carry
+
+            if batch_size != -1:
+                batch = self.get_batch(train_data, batch_size, key)
+            else:
+                batch = train_data
+
+            loss_val, loss_gradient = jax.value_and_grad(loss, argnums=0)(params, batch)
+            updates, opt_state = optim.update(loss_gradient, opt_state, params)
+            params = optax.apply_updates(params, updates)
+
+            carry = params, opt_state
+            return carry, loss_val
+
+        # Optimisation loop.
+        (params, _), history = jax.lax.scan(step, (params, opt_state), (iter_keys), unroll=unroll)
+
+        # Parameters bijection to constrained space
+        params = transform(params, DEFAULT_BIJECTION)
+
+        # Reconstruct model
+        opt_posterior = nnx.merge(graphdef, params, *static_state)
 
         graphdef, state = nnx.split(opt_posterior)
 
@@ -152,15 +235,15 @@ class PILCOAgent(AgentBase):
                 M_x = M_dx + m_x
                 S_x = S_dx + s_x + s1 @ C_dx + C_dx.T @ s1.T
 
-                new_M_dx, new_S_dx = self.dynamics_model.get_post_mu_fullcov2(m, s, dynamics_params, train_data)
-                M_x = new_M_dx + m_x
-                S_x = new_S_dx[0]
-                # TODO above is kinda dodgy, does it work?
+                # new_M_dx, new_S_dx = self.dynamics_model.get_post_mu_fullcov2(m, s, dynamics_params, train_data)
+                # M_x = new_M_dx + m_x
+                # S_x = new_S_dx[0]
+                # # TODO above is kinda dodgy, does it work?
 
                 return M_x, S_x
 
             return (*_propagate(m_x, s_x), jnp.add(reward, jnp.squeeze(
-                self.reward.apply(reward_params.params, m_x, s_x)[0]))), None
+                self.reward.apply(reward_params, m_x, s_x)[0]))), None
 
         val, _ = jax.lax.scan(_body_fun, init_val, None, self.agent_config.PLANNING_HORIZON)
         m_x, s_x, reward = val
@@ -172,9 +255,13 @@ class PILCOAgent(AgentBase):
         # Optimisation step.
         def optimisation_step(init_train_state):
             def _step_fn(controller_train_state, unused):
-                loss_val, grads = jax.value_and_grad(self._training_loss, argnums=1)(train_state["dynamics_train_state"]["train_state"].params,
+                q = self.dynamics_model.variational_posterior_builder(train_data.n)
+                graphdef, params, *static_state = nnx.split(q, Parameter, ...)
+                model = nnx.merge(graphdef, train_state["dynamics_train_state"]["train_state"], *static_state)
+                loss_val, grads = jax.value_and_grad(self._training_loss, argnums=1)(model,
                                                                                      controller_train_state.params,
-                                                                                     train_state["reward_train_state"].params)
+                                                                                     train_state["reward_train_state"].params,
+                                                                                     train_data)
                 new_controller_state = controller_train_state.apply_gradients(grads=grads)
                 return new_controller_state, loss_val
 
@@ -228,8 +315,9 @@ class PILCOAgent(AgentBase):
         action_1A = self.controller.apply(train_state["controller_train_state"].params, curr_obs_O[None, :], jnp.zeros((self.obs_dim, self.obs_dim)))[0]
 
         if (step_idx + 1) % self.agent_config.PLANNING_HORIZON == 0:
-            dynamics_train_state = self.dynamics_model.optimise_gp(train_data, train_state["dynamics_train_state"], key)
-            train_state["dynamics_train_state"] = dynamics_train_state
+            train_state["dynamics_train_state"] = self._optimise_gp(train_data, train_state, key)
+            # dynamics_train_state = self.dynamics_model.optimise_gp(train_data, train_state["dynamics_train_state"], key)
+            # train_state["dynamics_train_state"] = dynamics_train_state
             # with jax.disable_jit(disable=False):
             train_state = self._optimise_policy(train_state, train_data, key)
 

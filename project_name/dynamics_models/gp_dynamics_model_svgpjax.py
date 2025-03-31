@@ -222,14 +222,14 @@ class MOSVGPGPJax(DynamicsModelBase):
 
         return samples
 
-    @partial(jax.jit, static_argnums=(0,))
+    # @partial(jax.jit, static_argnums=(0,))
     def get_post_mu_fullcov2(self, m, s, params, train_data):  # TODO if no data then return the prior mu and var
         data = self._adjust_dataset(train_data)
 
         q = self.variational_posterior_builder(data.n)
 
         graphdef, state = nnx.split(q)
-        opt_posterior = nnx.merge(graphdef, params["train_state"])
+        opt_posterior = params  # nnx.merge(graphdef, params)
 
         XNew3D = self._adjust_dataset(gpjax.Dataset(m, jnp.zeros((m.shape[0], 2))))  # TODO separate this to be just X aswell
 
@@ -242,14 +242,14 @@ class MOSVGPGPJax(DynamicsModelBase):
 
         return mu, cov
 
-    @partial(jax.jit, static_argnums=(0,))
+    # @partial(jax.jit, static_argnums=(0,))
     def predict_on_noisy_inputs(self, m, s, params, train_data):   # TODO Idk if even nee this
         adj_data = self._adjust_dataset(train_data)
 
         q = self.variational_posterior_builder(adj_data.n)
 
         graphdef, state = nnx.split(q)
-        opt_posterior = nnx.merge(graphdef, params["train_state"])
+        opt_posterior = params  # nnx.merge(graphdef, params["train_state"])
 
         K = opt_posterior.posterior.prior.kernel.gram(adj_data.X).A
         obs_noise = opt_posterior.posterior.likelihood.obs_stddev.value ** 2
@@ -262,7 +262,7 @@ class MOSVGPGPJax(DynamicsModelBase):
         m, s, c = self._predict_given_factorisations(m, s,  iK, beta, train_data, params)
         return m, s, c
 
-    @partial(jax.jit, static_argnums=(0,))
+    # @partial(jax.jit, static_argnums=(0,))
     def _predict_given_factorisations(self, m, s, iK, beta, unadj_data, params):
         """
         Approximate GP regression at noisy inputs via moment matching
@@ -273,10 +273,11 @@ class MOSVGPGPJax(DynamicsModelBase):
         s = jnp.tile(s[None, None, :, :], [self.output_dim, self.output_dim, 1, 1])  # 2, 2, 3, 3
         inp = jnp.tile(self._centralised_input(unadj_data.X, m)[None, :, :], [self.output_dim, 1, 1])
 
-        lengthscales = jnp.concatenate((jnp.expand_dims(params["train_state"]["posterior"]["prior"]["kernel"]["kernel0"]["lengthscale"].value, axis=0),
-                                        jnp.expand_dims(params["train_state"]["posterior"]["prior"]["kernel"]["kernel0"]["lengthscale"].value, axis=0)))
-        variance = jnp.concatenate((jnp.expand_dims(params["train_state"]["posterior"]["prior"]["kernel"]["kernel0"]["variance"].value, axis=0),
-                                    jnp.expand_dims(params["train_state"]["posterior"]["prior"]["kernel"]["kernel0"]["variance"].value, axis=0)))
+        graphdef, real_params = nnx.split(params)
+        lengthscales = jnp.concatenate((jnp.expand_dims(real_params["posterior"]["prior"]["kernel"]["kernel0"]["lengthscale"].value, axis=0),
+                                        jnp.expand_dims(real_params["posterior"]["prior"]["kernel"]["kernel0"]["lengthscale"].value, axis=0)))
+        variance = jnp.concatenate((jnp.expand_dims(real_params["posterior"]["prior"]["kernel"]["kernel0"]["variance"].value, axis=0),
+                                    jnp.expand_dims(real_params["posterior"]["prior"]["kernel"]["kernel0"]["variance"].value, axis=0)))
         # TODO generalise the above
 
         # Calculate M and V: mean and inv(s) times input-output covariance
