@@ -30,6 +30,7 @@ from gpjax.typing import (
     KeyArray,
     ScalarFloat,
 )
+import sys
 
 with install_import_hook("gpjax", "beartype.beartype"):
     import logging
@@ -38,20 +39,7 @@ with install_import_hook("gpjax", "beartype.beartype"):
 
 
 class PILCOAgent(AgentBase):
-    """
-    Give it some initial training data
-    Fit the hyperparams to this initial data for both the dynamics model and controller
-    Traditionally then rollout a plan ~25 steps or so
-    Then predict the reward maybe?
-    Add all this data to the gp
-    Then optimise
 
-    New setup
-    Get initial data and fit the hyperparams
-    Do the usual main_loop for x steps using actor.get_next_point
-    When we get to 25 steps than actually optimise after getting the next point
-    It imports from MPC for ground truth creation, is that okay idk?
-    """
     def __init__(self, env, env_params, config, key):
         super().__init__(env, env_params, config, key)
         self.agent_config = get_PILCO_config()
@@ -60,16 +48,19 @@ class PILCOAgent(AgentBase):
         self.dynamics_model = dynamics_models.MOSVGPGPJax(env, env_params, config, self.agent_config, key)
 
         self.obs_dim = len(self.env.observation_space(self.env_params).low)
-        self.action_dim = self.env.action_space().shape[0]
+        self.action_dim = self.env.action_space(env_params).shape[0]
         # TODO match this to the other rl main stuff
 
-        self.controller = LinearController(self.obs_dim, self.action_dim, self.env.action_space().high)
+        self.controller = LinearController(self.obs_dim, self.action_dim, self.env.action_space(env_params).high)
         self.reward = ExponentialReward(self.obs_dim,
                                         w_init=lambda x, y: jnp.reshape(jnp.diag(jnp.array([2.0, 0.3])), (self.obs_dim, self.obs_dim)),
                                         t_init=lambda x, y: jnp.reshape(jnp.array([0.0, 0.0]), (1, self.obs_dim)))
         # TODO the above is hardcoded for pendulum
 
         self.tx = optax.adam(self.agent_config.POLICY_LR)
+
+        # self.tx = optax.chain(optax.clip_by_global_norm(self.agent_config.MAX_GRAD_NORM),
+        #                       optax.adam(self.agent_config.POLICY_LR))
 
         if config.TELEPORT:
             self._update_fn = update_obs_fn_teleport
@@ -80,11 +71,11 @@ class PILCOAgent(AgentBase):
         self.S_init = jnp.diag(jnp.array([0.03, 0.01]))
         # TODO both above are for pendulum, can we generalise
 
-    def create_train_state(self, init_data_x, init_data_y, key):
+    def create_train_state(self, init_data, key):
         train_state = {}
 
         key, _key = jrandom.split(key)
-        train_state["dynamics_train_state"] = self.dynamics_model.create_train_state(init_data_x, init_data_y, _key)
+        train_state["dynamics_train_state"] = self.dynamics_model.create_train_state(init_data, _key)
 
         key, _key = jrandom.split(key)
         params = self.controller.init(_key,
@@ -102,128 +93,192 @@ class PILCOAgent(AgentBase):
 
         return train_state
 
-    def pretrain_params(self, init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key):
+    def pretrain_params(self, init_data, pretrain_data, key):
         # optimisation for the dynamics model
-        train_state = self.create_train_state(init_data_x, init_data_y, key)
-        train_state["dynamics_train_state"] = self.dynamics_model.pretrain_params(init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key)
+        key, _key = jrandom.split(key)
+        train_state = self.create_train_state(init_data, _key)
 
-        data = gpjax.Dataset(pretrain_data_x, pretrain_data_y)
-        train_state["dynamics_train_state"] = self._optimise_gp(data, train_state, key)
+        key, _key = jrandom.split(key)
+        # train_state["dynamics_train_state"] = self.dynamics_model.pretrain_params(init_data, pretrain_data, _key)
+        train_state["dynamics_train_state"] = self.dynamics_model.pretrain_params(init_data, init_data, _key)
 
         # controller optimisation
-        pretrain_data = gpjax.Dataset(pretrain_data_x, pretrain_data_y)
-        train_state = self._optimise_policy(train_state, pretrain_data, key)
+        key, _key = jrandom.split(key)
+        with jax.disable_jit(disable=False):
+            train_state = self._optimise_policy(train_state, init_data, _key)
 
         return train_state
 
-    def get_batch(self, train_data: Dataset, batch_size: int, key: KeyArray) -> Dataset:
-        """Batch the data into mini-batches. Sampling is done with replacement.
-
-        Args:
-            train_data (Dataset): The training dataset.
-            batch_size (int): The batch size.
-            key (KeyArray): The random key to use for the batch selection.
-
-        Returns
-        -------
-            Dataset: The batched dataset.
-        """
-        x, y, n = train_data.X, train_data.y, train_data.n
-
-        # Subsample mini-batch indices with replacement.
-        indices = jrandom.choice(key, n, (batch_size,), replace=True)
-
-        return Dataset(X=x[indices], y=y[indices])
+    # def get_batch(self, train_data: Dataset, batch_size: int, key: KeyArray) -> Dataset:
+    #     """Batch the data into mini-batches. Sampling is done with replacement.
+    #
+    #     Args:
+    #         train_data (Dataset): The training dataset.
+    #         batch_size (int): The batch size.
+    #         key (KeyArray): The random key to use for the batch selection.
+    #
+    #     Returns
+    #     -------
+    #         Dataset: The batched dataset.
+    #     """
+    #     x, y, n = train_data.X, train_data.y, train_data.n
+    #
+    #     # Subsample mini-batch indices with replacement.
+    #     indices = jrandom.choice(key, n, (batch_size,), replace=True)
+    #
+    #     return Dataset(X=x[indices], y=y[indices])
+    #
+    # # @partial(jax.jit, static_argnums=(0,))
+    # def _optimise_gp(self, opt_data, train_state, key):
+    #     key, _key = jrandom.split(key)
+    #     data = self.dynamics_model._adjust_dataset(opt_data)
+    #     q = self.dynamics_model.variational_posterior_builder(data.n)
+    #
+    #     graphdef, state = nnx.split(q)
+    #     q = nnx.merge(graphdef, train_state["dynamics_train_state"]["train_state"])
+    #
+    #     schedule = optax.warmup_cosine_decay_schedule(init_value=0.0,
+    #                                                   peak_value=0.02,
+    #                                                   warmup_steps=75,
+    #                                                   decay_steps=2000,
+    #                                                   end_value=0.001)
+    #     # TODO idk if we need the lr scheduler or not
+    #
+    #     opt_posterior, _ = gpjax.fit(model=q,
+    #                                  objective=lambda p, d: -gpjax.objectives.elbo(p, d),
+    #                                  train_data=data,
+    #                                  # optim=optax.adam(learning_rate=self.agent_config.GP_LR),
+    #                                  optim=optax.adam(learning_rate=schedule),
+    #                                  num_iters=self.agent_config.TRAIN_GP_NUM_ITERS,
+    #                                  batch_size=128,
+    #                                  safe=True,
+    #                                  key=_key,
+    #                                  verbose=False)
+    #
+    #     # train_data = opt_data
+    #     # optim = optax.adam(learning_rate=self.agent_config.GP_LR)
+    #     # objective = lambda dp, cp, rp, d: -self._training_loss(dp, cp, rp, d)
+    #     # num_iters = self.agent_config.TRAIN_GP_NUM_ITERS
+    #     # batch_size = 128
+    #     # unroll = 1
+    #     #
+    #     # graphdef, params, *static_state = nnx.split(q, Parameter, ...)
+    #     #
+    #     # # Parameters bijection to unconstrained space
+    #     # params = transform(params, DEFAULT_BIJECTION, inverse=True)
+    #     #
+    #     # # Loss definition
+    #     # def loss(params: nnx.State, batch: Dataset) -> ScalarFloat:
+    #     #     params = transform(params, DEFAULT_BIJECTION)
+    #     #     model = nnx.merge(graphdef, params, *static_state)
+    #     #     return objective(model, train_state["controller_train_state"].params, train_state["reward_train_state"].params, batch)
+    #     #     # return objective(params, train_state["controller_train_state"].params, train_state["reward_train_state"].params, batch)
+    #     #
+    #     # # Initialise optimiser state.
+    #     # opt_state = optim.init(params)
+    #     #
+    #     # # Mini-batch random keys to scan over.
+    #     # iter_keys = jrandom.split(key, num_iters)
+    #     #
+    #     # # Optimisation step.
+    #     # def step(carry, key):
+    #     #     params, opt_state = carry
+    #     #
+    #     #     if batch_size != -1:
+    #     #         batch = self.get_batch(train_data, batch_size, key)
+    #     #     else:
+    #     #         batch = train_data
+    #     #
+    #     #     loss_val, loss_gradient = jax.value_and_grad(loss, argnums=0)(params, batch)
+    #     #     updates, opt_state = optim.update(loss_gradient, opt_state, params)
+    #     #     params = optax.apply_updates(params, updates)
+    #     #
+    #     #     carry = params, opt_state
+    #     #     return carry, loss_val
+    #     #
+    #     # # Optimisation loop.
+    #     # (params, _), history = jax.lax.scan(step, (params, opt_state), (iter_keys), unroll=unroll)
+    #     #
+    #     # # Parameters bijection to constrained space
+    #     # params = transform(params, DEFAULT_BIJECTION)
+    #     #
+    #     # # Reconstruct model
+    #     # opt_posterior = nnx.merge(graphdef, params, *static_state)
+    #
+    #     graphdef, state = nnx.split(opt_posterior)
+    #
+    #     return {"train_state": state}
+    #
+    # def training_loss_old(self, dynamics_params, controller_params, reward_params, train_data):
+    #     # This is for tuning controller's parameters
+    #     init_val = (self.m_init, self.S_init, 0.0)
+    #
+    #     def _body_fun(v, unused):
+    #         m_x, s_x, reward = v
+    #
+    #         def _propagate(m_x, s_x):
+    #             m_u, s_u, c_xu = self.controller.apply(controller_params, m_x, s_x)
+    #
+    #             m = jnp.concatenate([m_x, m_u], axis=1)
+    #             s1 = jnp.concatenate([s_x, s_x @ c_xu], axis=1)
+    #             s2 = jnp.concatenate([jnp.transpose(s_x @ c_xu), s_u], axis=1)
+    #             s = jnp.concatenate([s1, s2], axis=0)
+    #
+    #             # m = jnp.expand_dims(jnp.array(((0, 0, 0.00035808))), axis=0)
+    #             # s = jnp.array(((3.00000000e-02, 0.00000000e+00, 5.42722945e-05),
+    #             #                    (0.00000000e+00, 1.00000000e-02, 2.36281741e-05),
+    #             #                    (5.42722945e-05, 2.36281741e-05, 1.54011792e-07)))
+    #             #
+    #             # train_data_x = jnp.array(((-0.0666826,   0.87475473,  0.87598572),
+    #             #                           (0.19413371,  0.42402982, -0.28221906),
+    #             #                           (-0.84082947,  0.94610294, -0.90515271),
+    #             #                           (0.51090783,  0.4784161,   0.12383541),
+    #             #                           (-0.96840102,  0.54481848, -0.10317754),
+    #             #                           (0.41205937,  0.65534962,  0.16859988),
+    #             #                           (0.60086796, -0.47660882, -0.0124152),
+    #             #                           (0.34696807, -0.28261206,  0.14367731),
+    #             #                           (-0.32821263,  0.42114675, -0.82885184),
+    #             #                           (0.43397144,  0.94669633,  0.49274196)))
+    #             #
+    #             # train_data_y = jnp.array(((0.11307741,  0.01335315),
+    #             #                           (0.05947867,  0.04311458),
+    #             #                           (0.11041655, -0.0788934),
+    #             #                           (0.07343471,  0.09833879),
+    #             #                           (0.06769279, -0.01316055),
+    #             #                           (0.09573068,  0.09651736),
+    #             #                           (-0.0494007,   0.08861665),
+    #             #                           (-0.02471377,  0.08851058),
+    #             #                           (0.03942452, -0.11150727),
+    #             #                           (0.13457052,  0.05330367)))
+    #
+    #             M_dx, S_dx, C_dx = self.dynamics_model.predict_on_noisy_inputs(m, s, dynamics_params, train_data)
+    #             M_x = M_dx + m_x
+    #             S_x = S_dx + s_x + s1 @ C_dx + C_dx.T @ s1.T
+    #
+    #             # new_M_dx, new_S_dx = self.dynamics_model.get_post_mu_fullcov2(m, s, dynamics_params, train_data)
+    #             # M_x = new_M_dx + m_x
+    #             # S_x = new_S_dx[0]
+    #             # # TODO above is kinda dodgy, does it work?
+    #
+    #             return M_x, S_x
+    #
+    #         return (*_propagate(m_x, s_x), jnp.add(reward, jnp.squeeze(
+    #             self.reward.apply(reward_params, m_x, s_x)[0]))), None
+    #
+    #     val, _ = jax.lax.scan(_body_fun, init_val, None, self.agent_config.PLANNING_HORIZON)
+    #     m_x, s_x, reward = val
+    #
+    #     return -reward
 
     # @partial(jax.jit, static_argnums=(0,))
-    def _optimise_gp(self, opt_data, train_state, key):
-        key, _key = jrandom.split(key)
-        data = self.dynamics_model._adjust_dataset(opt_data)
-        q = self.dynamics_model.variational_posterior_builder(data.n)
+    def _optimise_policy(self, train_state, train_data, key, maxiter=30, restarts=5):  # original is 1000
+        def training_loss(controller_params, dynamics_params, reward_params, loss_train_data):
+            # This is for tuning controller's parameters
+            init_val = (self.m_init, self.S_init, jnp.zeros((1,)))
 
-        graphdef, state = nnx.split(q)
-        q = nnx.merge(graphdef, train_state["dynamics_train_state"]["train_state"])
+            def _propagate_step(runner_state, unused):
+                m_x, s_x, reward = runner_state
 
-        # schedule = optax.warmup_cosine_decay_schedule(init_value=0.0,
-        #                                               peak_value=0.02,
-        #                                               warmup_steps=75,
-        #                                               decay_steps=2000,
-        #                                               end_value=0.001)
-        # # TODO idk if we need the above
-        #
-        # opt_posterior, _ = gpjax.fit(model=q,
-        #                              objective=lambda p, d: -gpjax.objectives.elbo(p, d),
-        #                              train_data=data,
-        #                              optim=optax.adam(learning_rate=self.agent_config.GP_LR),
-        #                              # optim=optax.adam(learning_rate=schedule),
-        #                              num_iters=self.agent_config.TRAIN_GP_NUM_ITERS,
-        #                              batch_size=128,
-        #                              safe=True,
-        #                              key=_key,
-        #                              verbose=False)
-
-        train_data = opt_data
-        optim = optax.adam(learning_rate=self.agent_config.GP_LR)
-        objective = lambda dp, cp, rp, d: -self._training_loss(dp, cp, rp, d)
-        num_iters = self.agent_config.TRAIN_GP_NUM_ITERS
-        batch_size = 128
-        unroll = 1
-
-        graphdef, params, *static_state = nnx.split(q, Parameter, ...)
-
-        # Parameters bijection to unconstrained space
-        params = transform(params, DEFAULT_BIJECTION, inverse=True)
-
-        # Loss definition
-        def loss(params: nnx.State, batch: Dataset) -> ScalarFloat:
-            params = transform(params, DEFAULT_BIJECTION)
-            model = nnx.merge(graphdef, params, *static_state)
-            return objective(model, train_state["controller_train_state"].params, train_state["reward_train_state"].params, batch)
-            # return objective(params, train_state["controller_train_state"].params, train_state["reward_train_state"].params, batch)
-
-        # Initialise optimiser state.
-        opt_state = optim.init(params)
-
-        # Mini-batch random keys to scan over.
-        iter_keys = jrandom.split(key, num_iters)
-
-        # Optimisation step.
-        def step(carry, key):
-            params, opt_state = carry
-
-            if batch_size != -1:
-                batch = self.get_batch(train_data, batch_size, key)
-            else:
-                batch = train_data
-
-            loss_val, loss_gradient = jax.value_and_grad(loss, argnums=0)(params, batch)
-            updates, opt_state = optim.update(loss_gradient, opt_state, params)
-            params = optax.apply_updates(params, updates)
-
-            carry = params, opt_state
-            return carry, loss_val
-
-        # Optimisation loop.
-        (params, _), history = jax.lax.scan(step, (params, opt_state), (iter_keys), unroll=unroll)
-
-        # Parameters bijection to constrained space
-        params = transform(params, DEFAULT_BIJECTION)
-
-        # Reconstruct model
-        opt_posterior = nnx.merge(graphdef, params, *static_state)
-
-        graphdef, state = nnx.split(opt_posterior)
-
-        return {"train_state": state}
-
-    def _training_loss(self, dynamics_params, controller_params, reward_params, train_data):
-        # This is for tuning controller's parameters
-        init_val = (self.m_init, self.S_init, 0.0)
-
-        def _body_fun(v, unused):
-            m_x, s_x, reward = v
-
-            def _propagate(m_x, s_x):
                 m_u, s_u, c_xu = self.controller.apply(controller_params, m_x, s_x)
 
                 m = jnp.concatenate([m_x, m_u], axis=1)
@@ -231,94 +286,93 @@ class PILCOAgent(AgentBase):
                 s2 = jnp.concatenate([jnp.transpose(s_x @ c_xu), s_u], axis=1)
                 s = jnp.concatenate([s1, s2], axis=0)
 
-                M_dx, S_dx, C_dx = self.dynamics_model.predict_on_noisy_inputs(m, s, dynamics_params, train_data)
+                # print(m)
+                # print(s)
+                # print(loss_train_data.X)
+                # print(loss_train_data.y)
+
+                # jnp.save("x_data.npy", loss_train_data.X)
+                # jnp.save("y_data.npy", loss_train_data.y)
+
+                M_dx, S_dx, C_dx = self.dynamics_model.predict_on_noisy_inputs(m, s,
+                                                                               dynamics_params,
+                                                                               loss_train_data)
                 M_x = M_dx + m_x
                 S_x = S_dx + s_x + s1 @ C_dx + C_dx.T @ s1.T
 
-                # new_M_dx, new_S_dx = self.dynamics_model.get_post_mu_fullcov2(m, s, dynamics_params, train_data)
-                # M_x = new_M_dx + m_x
-                # S_x = new_S_dx[0]
-                # # TODO above is kinda dodgy, does it work?
+                new_reward = reward + jnp.squeeze(self.reward.apply(reward_params, m_x, s_x)[0], axis=0)
+                # TODO rewards get way too large, almost becoming much larger than 1
+                # TODO also there beomes nans in the prediction, but it seems to be accurate to original
+                # TODO what is causing this to get too large? It appears driven by data selection, what are the data issues that cause it?
+                # TODO ie if I change the seed of the dataset then it can train fine and sometimes it does not
 
-                return M_x, S_x
+                return (M_x, S_x, new_reward), new_reward
 
-            return (*_propagate(m_x, s_x), jnp.add(reward, jnp.squeeze(
-                self.reward.apply(reward_params, m_x, s_x)[0]))), None
+            # val = jax.lax.fori_loop(0, self.agent_config.PLANNING_HORIZON, _propagate_step, init_val)
+            val, _ = jax.lax.scan(_propagate_step, init_val, None, self.agent_config.PLANNING_HORIZON)
 
-        val, _ = jax.lax.scan(_body_fun, init_val, None, self.agent_config.PLANNING_HORIZON)
-        m_x, s_x, reward = val
+            m_x, s_x, reward = val
 
-        return -reward
+            return -jnp.squeeze(reward)
 
-    @partial(jax.jit, static_argnums=(0,))
-    def _optimise_policy(self, train_state, train_data, key, maxiter=10, restarts=5):  # original is 1000
         # Optimisation step.
         def optimisation_step(init_train_state):
-            def _step_fn(controller_train_state, unused):
-                q = self.dynamics_model.variational_posterior_builder(train_data.n)
-                graphdef, params, *static_state = nnx.split(q, Parameter, ...)
-                model = nnx.merge(graphdef, train_state["dynamics_train_state"]["train_state"], *static_state)
-                loss_val, grads = jax.value_and_grad(self._training_loss, argnums=1)(model,
-                                                                                     controller_train_state.params,
-                                                                                     train_state["reward_train_state"].params,
-                                                                                     train_data)
-                new_controller_state = controller_train_state.apply_gradients(grads=grads)
-                return new_controller_state, loss_val
+            def _step_fn(train_state, unused):
+                loss_val, grads = jax.value_and_grad(training_loss)(train_state["controller_train_state"].params,
+                                                                    train_state["dynamics_train_state"],
+                                                                    train_state["reward_train_state"].params,
+                                                                    train_data)
+                new_controller_train_state = train_state["controller_train_state"].apply_gradients(grads=grads)
+                train_state["controller_train_state"] = new_controller_train_state
+                return train_state, loss_val
 
             # Optimisation loop.
-            new_controller_state, history = jax.lax.scan(_step_fn, init_train_state, None, maxiter)
+            new_train_state, history = jax.lax.scan(_step_fn, init_train_state, None, maxiter)
 
             best_reward = -history[-1]
 
-            return new_controller_state, best_reward
+            return new_train_state, best_reward
 
         # an initial optimisation
-        new_controller_state, best_init_reward = optimisation_step(train_state["controller_train_state"])
+        new_train_state, best_init_reward = optimisation_step(train_state)
 
-        # do some vmap over some randomised params for the controller and run the above
-        def randomise_restart(key):
-            controller = LinearController(self.obs_dim, self.action_dim, self.env.action_space().high,
-                                          w_init=nn.initializers.normal(stddev=1),
-                                          b_init=nn.initializers.normal(stddev=1))
-            # TODO a bit dodgy but may work for now
-            params = controller.init(key,
-                                      jnp.zeros((1, self.obs_dim)),
-                                      jnp.zeros((self.obs_dim, self.obs_dim)))
-            randomised_train_state = TrainState.create(apply_fn=self.controller.apply, params=params, tx=self.tx)
-            new_params, best_reward = optimisation_step(randomised_train_state)
+        # TODO add the below back in once the above works
+        # # do some vmap over some randomised params for the controller and run the above
+        # def randomise_restart(key):
+        #     controller = LinearController(self.obs_dim, self.action_dim, self.env.action_space().high,
+        #                                   w_init=nn.initializers.normal(stddev=1),
+        #                                   b_init=nn.initializers.normal(stddev=1))
+        #     # TODO a bit dodgy but may work for now
+        #     params = controller.init(key,
+        #                               jnp.zeros((1, self.obs_dim)),
+        #                               jnp.zeros((self.obs_dim, self.obs_dim)))
+        #     randomised_train_state = TrainState.create(apply_fn=self.controller.apply, params=params, tx=self.tx)
+        #     new_params, best_reward = optimisation_step(randomised_train_state)
+        #
+        #     return new_params, best_reward
+        #
+        # key, _key = jrandom.split(key)
+        # restart_key = jrandom.split(_key, restarts)
+        # randomised_controller_best_states, batch_rewards = jax.vmap(randomise_restart)(restart_key)
+        #
+        # all_rewards = jnp.concatenate((jnp.expand_dims(best_init_reward, axis=0), batch_rewards))
+        # all_controller_states = jax.tree_util.tree_map(lambda x, y: jnp.concatenate((jnp.expand_dims(x, axis=0), y)), new_controller_state, randomised_controller_best_states)
+        #
+        # best_reward_idx = jnp.argmax(all_rewards)
+        # new_controller_state = jax.tree_util.tree_map(lambda x: x[best_reward_idx], all_controller_states)
 
-            return new_params, best_reward
-
-        key, _key = jrandom.split(key)
-        restart_key = jrandom.split(_key, restarts)
-        randomised_controller_best_states, batch_rewards = jax.vmap(randomise_restart)(restart_key)
-
-        all_rewards = jnp.concatenate((jnp.expand_dims(best_init_reward, axis=0), batch_rewards))
-        all_controller_states = jax.tree_util.tree_map(lambda x, y: jnp.concatenate((jnp.expand_dims(x, axis=0), y)), new_controller_state, randomised_controller_best_states)
-
-        best_reward_idx = jnp.argmax(all_rewards)
-        new_controller_state = jax.tree_util.tree_map(lambda x: x[best_reward_idx], all_controller_states)
-
-        train_state["controller_train_state"] = new_controller_state
-
-        return train_state
+        return new_train_state
 
     @partial(jax.jit, static_argnums=(0,))
     def compute_action(self, x_m, train_state):
         return self.controller.apply(train_state.params, x_m, jnp.zeros([self.obs_dim, self.obs_dim]))
-
-    def empty_func(self, train_state):
-        return train_state
 
     def get_next_point(self, curr_obs_O, train_state, train_data, step_idx, key):
         # do the usual act and all that
         action_1A = self.controller.apply(train_state["controller_train_state"].params, curr_obs_O[None, :], jnp.zeros((self.obs_dim, self.obs_dim)))[0]
 
         if (step_idx + 1) % self.agent_config.PLANNING_HORIZON == 0:
-            train_state["dynamics_train_state"] = self._optimise_gp(train_data, train_state, key)
-            # dynamics_train_state = self.dynamics_model.optimise_gp(train_data, train_state["dynamics_train_state"], key)
-            # train_state["dynamics_train_state"] = dynamics_train_state
-            # with jax.disable_jit(disable=False):
+            # train_state["dynamics_train_state"] = self.dynamics_model.optimise_gp(train_data, train_state["dynamics_train_state"], key)
             train_state = self._optimise_policy(train_state, train_data, key)
 
         x_next_OPA = jnp.concatenate((curr_obs_O, jnp.squeeze(action_1A, axis=0)), axis=-1)

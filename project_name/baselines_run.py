@@ -67,19 +67,20 @@ def run_train(config):
     init_data_x, init_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
                                                       config.NUM_INIT_DATA, _key, train=True)
     init_dataset = gpjax.Dataset(init_data_x, init_data_y)
-    key, _key = jrandom.split(key)
-    test_data_x, test_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
-                                                      config.NUM_INIT_DATA, _key)
+    # key, _key = jrandom.split(key)
+    # test_data_x, test_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
+    #                                                   config.NUM_INIT_DATA, _key)
 
     key, _key = jrandom.split(key)
     if config.PRETRAIN_HYPERPARAMS:
         pretrain_data_x, pretrain_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env,
                                                                   env_params,
                                                                   config.PRETRAIN_NUM_DATA, _key)
+        pretrain_data = gpjax.Dataset(pretrain_data_x, pretrain_data_y)
         key, _key = jrandom.split(key)
-        train_state = actor.pretrain_params(init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, _key)
+        train_state = actor.pretrain_params(init_dataset, pretrain_data, _key)
     else:
-        train_state = actor.create_train_state(init_data_x, init_data_y, _key)
+        train_state = actor.create_train_state(init_dataset, _key)
         # TODO how does the above work if there is no data, can we use the start obs and a randoma action or nothing?
 
     if actor.agent_config.ROLLOUT_SAMPLING:
@@ -159,12 +160,16 @@ def run_train(config):
                     nobs_O = actor._update_fn(curr_obs_O, delta, env, env_params)
                     # TODO sort the above out, it works when curr_obs doesn't change
                 else:
-                    # raise NotImplementedError("When is it not rollout sampling?")
-                    # TODO dodgy fix for now
-                    nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
-                    y_next_O = nobs_O - curr_obs_O
+                    delta = y_next_O[-env.obs_dim:]
+                    nobs_O = actor._update_fn(curr_obs_O, delta, env, env_params)
 
-                    global_returns += reward
+                    # # raise NotImplementedError("When is it not rollout sampling?")
+                    # # TODO dodgy fix for now
+                    # nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
+                    # y_next_O = nobs_O - curr_obs_O
+                    # TODO this does not work with periodic envs and was causing issues
+                    #
+                    # global_returns += reward
             else:
                 nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
                 y_next_O = nobs_O - curr_obs_O

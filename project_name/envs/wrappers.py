@@ -160,7 +160,6 @@ class GenerativeEnv(object):
 def make_normalised_plot_fn(norm_env, env_params, plot_fn):
     obs_dim = norm_env.observation_space().low.size
     wrapped_env = norm_env.wrapped_env
-
     # Set domain
     low = np.concatenate([wrapped_env.observation_space(env_params).low,
                           np.expand_dims(np.array(wrapped_env.action_space(env_params).low), axis=0)])

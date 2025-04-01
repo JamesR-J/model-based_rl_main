@@ -51,11 +51,11 @@ class MPCAgent(AgentBase):
         else:
             self._update_fn = update_obs_fn
 
-    def create_train_state(self, init_data_x, init_data_y, key):
-        return self.dynamics_model.create_train_state(init_data_x, init_data_y, key)
+    def create_train_state(self, init_data, key):
+        return self.dynamics_model.create_train_state(init_data, key)
 
-    def pretrain_params(self, init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key):
-        return self.dynamics_model.pretrain_params(init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key)
+    def pretrain_params(self, init_data, pretrain_data, key):
+        return self.dynamics_model.pretrain_params(init_data, pretrain_data, key)
 
     @partial(jax.jit, static_argnums=(0, 3, 4, 5))  # TODO should really verify this
     def powerlaw_psd_gaussian_jax(self, key, exponent, base_nsamps, action_dim, time_horizon, fmin=0.0) -> jnp.ndarray:

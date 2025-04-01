@@ -6,21 +6,8 @@ def get_PILCO_config():
 
     config.PLANNING_HORIZON = 25
 
-    config.INIT_VAR_DIVISOR = 4  # TODO what is this and where should it be?
-
-    config.NUM_CANDIDATES = 25  # 30
     config.GAMMA = 1.25  # This is something else not discount value
     config.DISCOUNT_FACTOR = 1.0
-    config.N_ELITES = 3  # 6  # TODO check it works for diff numbers of this
-    config.iCEM_ITERS = 3
-    config.XI = 0.3
-
-    config.ACTIONS_PER_PLAN = 6  # 1  # How many actions to keep out of each total plan iteration, must be less than planning horizon
-
-    config.BETA = 3.0  # 6.0
-
-    config.ACQUISITION_SAMPLES = 15
-    config.OPTIMISATION_ITERS = 5  # TODO think this shoud be diff from config.iCEM_ITERS but should check
 
     config.LR = 1e-3
     config.POLICY_LR = 0.1
@@ -28,6 +15,8 @@ def get_PILCO_config():
     config.TRAIN_GP_NUM_ITERS = 10#0#0
     config.GP_LR = 0.01
     config.NUM_INDUCING_POINTS = 100
+
+    config.MAX_GRAD_NORM = 0.5
 
     config.ROLLOUT_SAMPLING = False
 

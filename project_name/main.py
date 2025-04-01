@@ -7,8 +7,7 @@ import logging
 
 
 jax.config.update("jax_enable_x64", True)
-
-# TODO need to pretrain to find optimal params for the svgp
+# jax.config.update("jax_debug_nans", True)
 
 # TODO set a precedent for when we split keys, it should be at the lowest level possible before use
 
@@ -24,7 +23,7 @@ jax.config.update("jax_enable_x64", True)
 # TODO replace the updating dataset with flashbax maybe? would this be more efficient or less?
 
 # env, env_params = gymnax.make("MountainCarContinuous-v0")
-# TODO make these envs in gymnax style for continuous control
+# TODO make these envs in gymnax style for continuous control, can we add a wrapper so we don't need to add generative env to them all?
 
 
 """

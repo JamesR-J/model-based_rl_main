@@ -11,10 +11,10 @@ class AgentBase:  # TODO sort this oot
         self.env = env
         self.env_params = env_params
 
-    def create_train_state(self, init_data_x, init_data_y, key):
+    def create_train_state(self, init_data, key):
         raise NotImplementedError
 
-    def pretrain_params(self, init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key):
+    def pretrain_params(self, init_data, pretrain_data, key):
         raise NotImplementedError
 
     # def reset_memory(self, mem_state) -> Any:
