@@ -18,8 +18,8 @@ from jaxtyping import Float, install_import_hook
 from project_name import utils
 
 with install_import_hook("gpjax", "beartype.beartype"):
-    import logging
-    logging.getLogger('gpjax').setLevel(logging.WARNING)
+    # import logging
+    # logging.getLogger('gpjax').setLevel(logging.WARNING)
     import gpjax
 
 

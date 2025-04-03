@@ -21,7 +21,7 @@ class NeuralNetDynamicsModel(DynamicsModelBase):
 
         self.tx = optax.adam(self.agent_config.LR)
 
-    def create_train_state(self, init_data_x, init_data_y, key):
+    def create_train_state(self, init_data, key):
         def create_ensemble_state(key):
             params = self.network.init(key, jnp.zeros((1, self.obs_dim)), jnp.zeros((1, self.action_dim)))
             ind_state = TrainState.create(apply_fn=self.network.apply, params=params, tx=self.tx)
@@ -30,6 +30,7 @@ class NeuralNetDynamicsModel(DynamicsModelBase):
         ensemble_keys = jrandom.split(key, self.agent_config.NUM_ENSEMBLE)
         return jax.vmap(create_ensemble_state, in_axes=(0,))(ensemble_keys)
 
+    @partial(jax.jit, static_argnums=(0,))
     def predict(self, x, train_state, key):
         obs_BO = x[..., :self.obs_dim]
         actions_BA = x[..., self.obs_dim:]

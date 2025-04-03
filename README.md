@@ -8,3 +8,6 @@ I have also removed check_positive if statement from Gpjax parameters.py:143 sin
 over a GP, it seems to be fine without it but maybe will lead to some errors?
 
 Also have done the same for _check_is_lower_triangular on parameters.py:158 for a similar reason
+
+FURTHER in gpjax package dataset.py:92 and dataset.py:115 I have switched off _check_shape and _check_precision 
+respectively as this prevented passing the gpjax Dataset through a vmap even if it wasn't being "vmapped"

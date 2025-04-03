@@ -37,17 +37,17 @@ class PETSAgent(MPCAgent):
 
         self.dynamics_model = dynamics_models.NeuralNetDynamicsModel(env, env_params, config, self.agent_config, key)
 
-    def create_train_state(self, init_data_x, init_data_y, key):
-        return self.dynamics_model.create_train_state(init_data_x, init_data_y, key)
+    def create_train_state(self, init_data, key):
+        return self.dynamics_model.create_train_state(init_data, key)
 
-    def pretrain_params(self, init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key):
+    def pretrain_params(self, init_data, pretrain_data, key):
         # add some batch data call for each iteration of the loop
 
-        train_state = self.create_train_state(init_data_x, init_data_y, key)
+        train_state = self.create_train_state(init_data, key)
 
         def update_fn(update_state, unused):
-            batch_x = jnp.reshape(pretrain_data_x, (self.agent_config.NUM_ENSEMBLE, -1, pretrain_data_x.shape[-1]))
-            batch_y = jnp.reshape(pretrain_data_y, (self.agent_config.NUM_ENSEMBLE, -1, pretrain_data_y.shape[-1]))
+            batch_x = jnp.reshape(pretrain_data.X, (self.agent_config.NUM_ENSEMBLE, -1, pretrain_data.X.shape[-1]))
+            batch_y = jnp.reshape(pretrain_data.y, (self.agent_config.NUM_ENSEMBLE, -1, pretrain_data.y.shape[-1]))
             # TODO is the above needed for speedups?
             loss, new_update_state = self.dynamics_model.update(batch_x, batch_y, update_state)
             return new_update_state, loss
@@ -57,15 +57,15 @@ class PETSAgent(MPCAgent):
 
         return new_train_state
 
-    @partial(jax.jit, static_argnums=(0, 1, 5, 6))
-    def execute_mpc(self, f, obs, train_state, key, horizon, actions_per_plan):
+    @partial(jax.jit, static_argnums=(0, 1, 6, 7))
+    def execute_mpc(self, f, obs, train_state, train_data, key, horizon, actions_per_plan):
         key, _key = jrandom.split(key)
         batch_key = jrandom.split(_key, self.agent_config.NUM_ENSEMBLE)
 
         # run iCEM on each dynamics model and then select the best return is that okay? the og does it for each rollout
         # so each iCEM step has the optimal action then retries, is that better maybe?
         # the original does for samples within iCEM has diff members of the ensemble
-        full_path_USX, output_USX, sample_returns_USB = jax.vmap(self.run_algorithm_on_f, in_axes=(None, None, 0, 0, None, None))(f, obs, train_state, batch_key, horizon, actions_per_plan)
+        full_path_USX, output_USX, sample_returns_USB = jax.vmap(self.run_algorithm_on_f, in_axes=(None, None, 0, None, 0, None, None))(f, obs, train_state, train_data, batch_key, horizon, actions_per_plan)
         # above basically runs the optimal iCEM for each dynamics model and then we find the best one, is that better or worse than the original method?
 
         # given the returns we find the optimal one over the batch for each ensemble
@@ -166,12 +166,13 @@ class PETSAgent(MPCAgent):
         return train_state
 
     # @partial(jax.jit, static_argnums=(0,))
-    def get_next_point(self, curr_obs_O, train_state, key):
+    def get_next_point(self, curr_obs_O, train_state, train_data, step_idx, key):
         action_1A, exe_path_USOPA, _ = self.execute_mpc(self.make_postmean_func(),
-                                                                          curr_obs_O,
-                                                                          train_state,
-                                                                          key,
-                                                                          1, 1)
+                                                        curr_obs_O,
+                                                        train_state,
+                                                        train_data,
+                                                        key,
+                                                        1, 1)
 
         x_next_OPA = jnp.concatenate((curr_obs_O, jnp.squeeze(action_1A, axis=0)))
 
@@ -189,4 +190,4 @@ class PETSAgent(MPCAgent):
 
         return x_next_OPA, exe_path_USOPA, curr_obs_O, train_state, None, key
 
-# TODO could add some testing in
+# TODO would be worth adding some testing in

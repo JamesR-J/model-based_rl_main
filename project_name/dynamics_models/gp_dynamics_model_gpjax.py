@@ -65,18 +65,18 @@ class MOGPGPJax(DynamicsModelBase):
         self.likelihood_builder = lambda n: gpjax.likelihoods.Gaussian(num_datapoints=n,
                                                                        obs_stddev=gpjax.parameters.PositiveReal(jnp.array(0.005988507226896687)))
 
-    def create_train_state(self, init_data_x, init_data_y, key):
-        data = self._adjust_dataset(gpjax.Dataset(init_data_x, init_data_y))
+    def create_train_state(self, init_data, key):
+        data = self._adjust_dataset(init_data)
         likelihood = self.likelihood_builder(data.n)
         posterior = self.prior * likelihood
         graphdef, state = nnx.split(posterior)
 
         return {"train_state": state}
 
-    @staticmethod
-    def _adjust_dataset(dataset):
+    @partial(jax.jit, static_argnums=(0,))
+    def _adjust_dataset(self, dataset):
         num_points = dataset.X.shape[0]
-        in_dim = dataset.X.shape[1]
+        # in_dim = dataset.X.shape[1]
         out_dim = dataset.y.shape[1]
         # print(f"Num Points: {num_points}; Num Inputs: {in_dim}; Num Outputs: {out_dim}")
 
@@ -86,13 +86,14 @@ class MOGPGPJax(DynamicsModelBase):
 
         new_y = dataset.y.reshape(-1, 1)
 
-        assert new_x.shape == (num_points * out_dim, in_dim + 1), "Output X is the wrong shape"
-        assert new_y.shape == (num_points * out_dim, 1), "Output Y is the wrong shape"
+        # assert new_x.shape == (num_points * out_dim, in_dim + 1), "Output X is the wrong shape"
+        # assert new_y.shape == (num_points * out_dim, 1), "Output Y is the wrong shape"
+        # TODO can we reinstantiate this yet keep the jit?
 
         return gpjax.Dataset(new_x, new_y)
 
-    def pretrain_params(self, init_data_x, init_data_y, pretrain_data_x, pretrain_data_y, key):
-        opt_posterior = self.optimise_gp(pretrain_data_x, pretrain_data_y, key)
+    def pretrain_params(self, init_data, pretrain_data, key):
+        opt_posterior = self.optimise_gp(pretrain_data, key)
 
         lengthscales = {}
         variances = {}

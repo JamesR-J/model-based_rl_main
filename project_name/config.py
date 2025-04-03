@@ -10,7 +10,7 @@ def get_config():
     config.NORMALISE_ENV = True
     config.GENERATIVE_ENV = True
     config.TELEPORT = True  # aka teleporting in the original thing
-    config.PRETRAIN_HYPERPARAMS = True
+    config.PRETRAIN_HYPERPARAMS = False
     config.PRETRAIN_NUM_DATA = 10#00
     config.NUM_INIT_DATA = 40 * 4  # 1
 
@@ -33,9 +33,9 @@ def get_config():
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
     # config.AGENT_TYPE = "MPC"
-    config.AGENT_TYPE = "PILCO"
+    # config.AGENT_TYPE = "PILCO"
     # config.AGENT_TYPE = "TIP"
-    # config.AGENT_TYPE = "PETS"
+    config.AGENT_TYPE = "PETS"
 
     config.AGENT_CONFIG = {}
 
