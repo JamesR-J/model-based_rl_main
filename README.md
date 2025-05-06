@@ -1,4 +1,20 @@
-# model-based_rl_main
+# Jax Model-Based RL 
+
+no current benchamrk place for model-based rl
+
+implementated algorithms as a table:
+PETS
+PILCO
+cite papres aswell
+
+## Basic Usage
+
+## Installation
+
+## Contributing
+
+## Future Roadmap
+
 
 Go on your .venv and to site-packages/plum and adjust function.py:478 to log to debug not info.
 For some reason GPJax as crazy logging and cannot find how else to turn it off. There may be a better way so please let 
