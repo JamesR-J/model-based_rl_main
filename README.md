@@ -34,7 +34,7 @@ At it's core most Model-Based methods have some dynamics model to learn the tran
 
 New algorithms can be added in the 'agent' folder with their own directory/module stating the algorithm name. This must match the file name. The file itself has an agent class that imports from 'agent_base.py' and follows the naming convention of '<Algorithm Name>Agent'.
 
-We use [Ml Collections](https://github.com/google/ml_collections) for Configs as it allows easy use with [ABSL Flags](https://github.com/abseil/abseil-py) when running on a cluster for hyperparameter sweeps. There is a general config file and each agent must have it's own config file.
+We use [Ml Collections](https://github.com/google/ml_collections) for Configs as it allows easy use with [ABSL](https://github.com/abseil/abseil-py) flags when running on a cluster for hyperparameter sweeps. There is a general config file and each agent must have it's own config file.
 
 This is a multi-file implementation as we think it enables easier comparisons than single-file implementations, but we try and keep most of the coniditional logic abstracted to the unique 'agent' files, rather than housing this type of logic in the shared running files!
 
