@@ -1,19 +1,51 @@
 # Jax Model-Based RL 
 
+This is the beginnings of a benchmark suite of Model-Based Reinforcement Learning approaches based in Jax. 
+
+### Why Jax?
+
+Much of the 
+
+Issues are the changing dataset size at each real iteration aren't the most amenable to Jax tracers, but nonetheless
+it still provides speedups.
+
 no current benchamrk place for model-based rl
 
-implementated algorithms as a table:
-PETS
-PILCO
-cite papres aswell
+Currently implemented algorithms:
+
+|    Algorithm     |                                                         Reference                                                         |
+|:----------------:|:-------------------------------------------------------------------------------------------------------------------------:|
+| MPC (using iCEM) |                           [Paper](https://proceedings.mlr.press/v155/pinneri21a/pinneri21a.pdf)                           |
+|       TIP        | [Paper](https://proceedings.neurips.cc/paper_files/paper/2022/file/b90cb10d4dae058dd167388e76168c1b-Paper-Conference.pdf) |
+|       PETS       |      [Paper](https://proceedings.neurips.cc/paper_files/paper/2018/file/3de568f8597b94bda53149c7d7f5958c-Paper.pdf)       |
+|      PILCO       |                [Paper](https://aiweb.cs.washington.edu/research/projects/aiweb/media/papers/tmpZj4RyS.pdf)                |
+
+Currently implemented environments:
+
+|  Environment   |                                                         Reference                                                         |
+|:--------------:|:-------------------------------------------------------------------------------------------------------------------------:|
+|    Pendulum    | [Paper](https://proceedings.neurips.cc/paper_files/paper/2022/file/b90cb10d4dae058dd167388e76168c1b-Paper-Conference.pdf) |
+| Pilco Cartpole |                [Paper](https://aiweb.cs.washington.edu/research/projects/aiweb/media/papers/tmpZj4RyS.pdf)                |
+|  Wet Chicken   |      [Paper](https://arxiv.org/pdf/1907.04902)       |
+
+
 
 ## Basic Usage
+
+have some standard and shared dynamics models
+new algoriths can be added in the agents with a folder 
+add the specific naming style as it is essential
 
 ## Installation
 
 ## Contributing
 
 ## Future Roadmap
+
+incorporate model-free wrapper to enable easy comparison
+reward function learning
+easy environment wrapper 
+
 
 
 Go on your .venv and to site-packages/plum and adjust function.py:478 to log to debug not info.

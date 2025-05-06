@@ -34,8 +34,8 @@ def get_config():
 
     # config.AGENT_TYPE = "MPC"
     # config.AGENT_TYPE = "PILCO"
-    # config.AGENT_TYPE = "TIP"
-    config.AGENT_TYPE = "PETS"
+    config.AGENT_TYPE = "TIP"
+    # config.AGENT_TYPE = "PETS"
 
     config.AGENT_CONFIG = {}
 
