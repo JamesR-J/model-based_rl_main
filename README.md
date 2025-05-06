@@ -32,7 +32,7 @@ Currently implemented environments:
 
 At it's core most Model-Based methods have some dynamics model to learn the transition (and reward) dynamics and a planner (or policy) to generate actions. We mirror this in our code base. We house different types of dynamics models in the 'dynamics model' folder that can be arbitrarily swapped. Agents (or planners/policies) are housed within their own folder.
 
-New algorithms can be added in the 'agent' folder with their own directory/module stating the algorithm name. This must match the file name. The file itself has an agent class that imports from 'agent_base.py' and follows the naming convention of '<Algorithm Name>Agent'.
+New algorithms can be added in the 'agent' folder with their own directory/module stating the algorithm name. This must match the file name. The file itself has an agent class that imports from 'agent_base.py' and follows the naming convention of '\<Algorithm Name\>Agent'.
 
 We use [Ml Collections](https://github.com/google/ml_collections) for Configs as it allows easy use with [ABSL](https://github.com/abseil/abseil-py) flags when running on a cluster for hyperparameter sweeps. There is a general config file and each agent must have it's own config file.
 
