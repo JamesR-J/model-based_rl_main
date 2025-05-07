@@ -20,8 +20,7 @@ class TIPAgent(MPCAgent):
         self.agent_config = get_TIP_config()
 
         # TODO add some import from folder check thingo
-        # self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
-        self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
+        self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
 
     def make_postmean_func_const_key(self):
         def _postmean_fn(x, unused1, unused2, train_state, train_data, key):

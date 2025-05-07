@@ -7,7 +7,6 @@ from flax.training import train_state
 import optax
 from typing import List, Tuple, Dict, Optional, NamedTuple, Any
 from functools import partial
-import GPJax_AScannell as gpjaxas
 import optax
 from project_name.dynamics_models import DynamicsModelBase
 from jaxtyping import Float, install_import_hook
@@ -21,7 +20,6 @@ from gpjax.typing import (
     Array,
     ScalarFloat,
 )
-from GPJax_AScannell.gpjax.utilities.ops import sample_mvn_diag, sample_mvn
 from cola.ops.operators import I_like
 from flax import nnx
 import tensorflow_probability.substrates.jax as tfp
@@ -50,7 +48,7 @@ class SeparateIndependent(gpjax.kernels.stationary.StationaryKernel):
         return tfp.distributions.Normal(0.0, 1.0)
 
 
-class MOSVGPGPJax(DynamicsModelBase):
+class MOSVGP(DynamicsModelBase):
     def __init__(self, env, env_params, config, agent_config, key):
         super().__init__(env, env_params, config, agent_config, key)
 

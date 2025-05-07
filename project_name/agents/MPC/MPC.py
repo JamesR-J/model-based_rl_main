@@ -36,9 +36,7 @@ class MPCAgent(AgentBase):
 
         # TODO add some import from folder check thingo
         # self.dynamics_model = dynamics_models.MOGP(env, env_params, config, self.agent_config, key)
-        # self.dynamics_model = dynamics_models.MOSVGP(env, env_params, config, self.agent_config, key)
-        # self.dynamics_model = dynamics_models.MOGPGPJax(env, env_params, config, self.agent_config, key)
-        self.dynamics_model = dynamics_models.MOSVGPGPJax(env, env_params, config, self.agent_config, key)
+        self.dynamics_model = dynamics_models.MOSVGP(env, env_params, config, self.agent_config, key)
 
         self.obs_dim = len(self.env.observation_space(self.env_params).low)
         self.action_dim = self.env.action_space().shape[0]

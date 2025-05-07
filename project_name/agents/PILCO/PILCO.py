@@ -14,7 +14,6 @@ from project_name.agents.PILCO import LinearController, get_PILCO_config, Expone
 import optax
 from flax.training.train_state import TrainState
 import flax.linen as nn
-import GPJax_AScannell as gpjaxas
 from jaxtyping import Float, install_import_hook
 from functools import partial
 from project_name import utils
@@ -45,7 +44,7 @@ class PILCOAgent(AgentBase):
         self.agent_config = get_PILCO_config()
 
         # TODO add some import from folder check thingo
-        self.dynamics_model = dynamics_models.MOSVGPGPJax(env, env_params, config, self.agent_config, key)
+        self.dynamics_model = dynamics_models.MOSVGP(env, env_params, config, self.agent_config, key)
 
         self.obs_dim = len(self.env.observation_space(self.env_params).low)
         self.action_dim = self.env.action_space(env_params).shape[0]
