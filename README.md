@@ -1,6 +1,6 @@
 # Jax Model-Based RL 
 
-This is the beginnings of a benchmark suite of Model-Based Reinforcement Learning (RL) approaches based in Jax. 
+The beginnings of a benchmark suite of Model-Based Reinforcement Learning (RL) approaches based in Jax. 
 We aim to provide a consistent location for many of the SOTA methods today, enabling much easier benchmarking of new algorithmic improvements as well as provide a useful testbed for practitioners.
 We are very open to suggestions and contributions so please get in touch!
 
