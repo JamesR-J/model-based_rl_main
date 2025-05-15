@@ -8,6 +8,7 @@ from project_name import dynamics_models
 from jaxtyping import Float, install_import_hook
 from project_name import utils
 from flax import nnx
+from jax.experimental import checkify
 
 with install_import_hook("gpjax", "beartype.beartype"):
     import gpjax
@@ -159,7 +160,7 @@ class TIPAgent(MPCAgent):
 
         return action, exe_path, output
 
-    # @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,))
     def get_next_point(self, curr_obs, train_state, train_data, step_idx, key):
         key, _key = jrandom.split(key)
         batch_key = jrandom.split(_key, self.agent_config.ACQUISITION_SAMPLES)
@@ -194,7 +195,7 @@ class TIPAgent(MPCAgent):
         key, _key = jrandom.split(key)
         x_next, acq_val = self._optimise(train_state, train_data, self.make_postmean_func(), exe_path_BSOPA, x_test, _key)
 
-        assert jnp.allclose(curr_obs, x_next[:self.obs_dim]), "For rollout cases, we can only give queries which are from the current state"
-        # TODO can we make this jittable?
+        checkify.check(jnp.allclose(curr_obs, x_next[:self.obs_dim]),
+                      "For rollout cases, we can only give queries which are from the current state")
 
         return x_next, exe_path_BSOPA, curr_obs, train_state, acq_val, key

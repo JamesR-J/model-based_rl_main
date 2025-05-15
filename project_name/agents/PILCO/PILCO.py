@@ -18,6 +18,7 @@ from jaxtyping import Float, install_import_hook
 from functools import partial
 from project_name import utils
 from flax import nnx
+from jax.experimental import checkify
 from gpjax.parameters import (
     DEFAULT_BIJECTION,
     Parameter,
@@ -365,6 +366,7 @@ class PILCOAgent(AgentBase):
     def compute_action(self, x_m, train_state):
         return self.controller.apply(train_state.params, x_m, jnp.zeros([self.obs_dim, self.obs_dim]))
 
+    # @partial(jax.jit, static_argnums=(0,))  # can't jit due to conditional, not sure what is quicker tho
     def get_next_point(self, curr_obs_O, train_state, train_data, step_idx, key):
         # do the usual act and all that
         action_1A = self.controller.apply(train_state["controller_train_state"].params, curr_obs_O[None, :], jnp.zeros((self.obs_dim, self.obs_dim)))[0]
@@ -379,8 +381,9 @@ class PILCOAgent(AgentBase):
                       "exe_path_y": jnp.zeros((1, 10, 2))}
         # TODO the above is a bad fix for now
 
-        assert jnp.allclose(curr_obs_O, x_next_OPA[:self.obs_dim]), "For rollout cases, we can only give queries which are from the current state"
-        # TODO can we jax the assertion?
+        checkify.check(jnp.allclose(curr_obs_O, x_next_OPA[:self.obs_dim]),
+                       "For rollout cases, we can only give queries which are from the current state")
+
 
         return x_next_OPA, exe_path, curr_obs_O, train_state, None, key
 

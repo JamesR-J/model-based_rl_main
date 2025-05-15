@@ -14,6 +14,7 @@ from functools import partial
 import logging
 from gymnax.environments import environment
 from flax import struct
+import matplotlib.pyplot as plt
 
 class MemoryState(NamedTuple):
     hstate: jnp.ndarray
@@ -260,3 +261,5 @@ def make_plots(plot_fn, domain, true_path, data, env, env_params, config, agent_
         neatplot.save_figure(f"figures/postmean_{i}", "png", fig=fig_postmean)
         neatplot.save_figure(f"figures/samp_{i}", "png", fig=fig_samp)
         neatplot.save_figure(f"figures/obs_{i}", "png", fig=fig_obs)
+
+    plt.close()

@@ -142,10 +142,10 @@ class MOGP(DynamicsModelBase):
         XNew3D = self._adjust_dataset(gpjax.Dataset(XNew, jnp.zeros((XNew.shape[0], 2))))  # TODO separate this to be just X aswell
 
         latent_dist = opt_posterior.predict(XNew3D.X, data)
-        mu = latent_dist.mean()  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
+        mu = latent_dist.mean  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
         mu = mu.reshape(-1, self.obs_dim) # TODO is this correct?
 
-        std = latent_dist.stddev()
+        std = jnp.sqrt(latent_dist.variance)
         std = std.reshape(-1, self.obs_dim) # TODO is this correct?
 
         return mu, std
@@ -162,7 +162,7 @@ class MOGP(DynamicsModelBase):
         XNew3D = self._adjust_dataset(gpjax.Dataset(XNew, jnp.zeros((XNew.shape[0], 2))))  # TODO separate this to be just X aswell
 
         latent_dist = opt_posterior.predict(XNew3D.X, data)
-        mu = latent_dist.mean()  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
+        mu = latent_dist.mean  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
         mu = mu.reshape(-1, self.obs_dim) # TODO is this correct?
 
         cov = latent_dist.covariance()

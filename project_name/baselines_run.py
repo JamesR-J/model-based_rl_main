@@ -18,6 +18,7 @@ import time
 from project_name.viz import plotters, plot
 import neatplot
 from jaxtyping import Float, install_import_hook
+from jax.experimental import checkify
 
 with install_import_hook("gpjax", "beartype.beartype"):
     import logging
@@ -128,11 +129,12 @@ def run_train(config):
             # TODO some if statement if our input data does not exist as not using generative approach, i.e. the first step
 
             # get next point
-            x_next_OPA, exe_path, curr_obs_O, train_state, acq_val, key = actor.get_next_point(curr_obs_O,
+            err, (x_next_OPA, exe_path, curr_obs_O, train_state, acq_val, key) = checkify.checkify(actor.get_next_point)(curr_obs_O,
                                                                                                train_state,
                                                                                                train_data,
                                                                                                step_idx,
                                                                                                key)
+            err.throw()
 
             # periodically run evaluation and plot
             if (step_idx % config.EVAL_FREQ == 0 or step_idx + 1 == config.NUM_ITERS):

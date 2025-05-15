@@ -16,6 +16,7 @@ from project_name.utils import update_obs_fn, update_obs_fn_teleport, get_f_mpc,
 from project_name import dynamics_models
 from jaxtyping import Float, install_import_hook
 from project_name import utils
+from jax.experimental import checkify
 
 with install_import_hook("gpjax", "beartype.beartype"):
     # import logging
@@ -341,7 +342,7 @@ class MPCAgent(AgentBase):
         # assert jnp.allclose(curr_obs_O, x_next_OPA[:self.obs_dim]), "For rollout cases, we can only give queries which are from the current state"
         # TODO can we jax the assertion?
 
-        # jax.experimental.checkify
+        checkify.check(jnp.allclose(curr_obs_O, x_next_OPA[:self.obs_dim]), "For rollout cases, we can only give queries which are from the current state")
 
         return x_next_OPA, exe_path, curr_obs_O, train_state, None, key
 

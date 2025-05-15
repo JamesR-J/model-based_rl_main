@@ -51,8 +51,8 @@ However, there are some current work-arounds we make as of now, but will have so
 Go on your '.venv' and to 'site-packages/plum' and adjust 'function.py:478' to log to debug not info.
 For some reason GPJax has extensive logging and we are unsure how else to turn this off. 
 
-Remove 'check_positive' if statement from GPJax 'parameters.py:143' since it disenables jit operations over a GP, it seems to be fine without it but maybe will lead to some errors?
-Similarly, remove the if statement for  '_check_is_lower_triangular' on 'parameters.py:158'.
+Remove all checks from 'parameters.py:169' onwards.
+It currently causes errors but is something that must be sorted in future due to error checking.
 
 Further in GPJax 'dataset.py:92' and 'dataset.py:115' we have switched off '_check_shape' and '_check_precision' respectively as this prevented passing the GPJax Dataset through a vmap even if it wasn't being "vmapped".
 
