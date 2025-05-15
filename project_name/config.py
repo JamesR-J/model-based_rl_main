@@ -9,16 +9,20 @@ def get_config():
     config.ENV_NAME = "bacpendulum-v0"
     config.NORMALISE_ENV = True
     config.GENERATIVE_ENV = True
-    config.TELEPORT = True  # aka teleporting in the original thing
+    config.TELEPORT = True  # aka teleporting in the original thing, good for periodic envs
+    # TODO can we make teleport part of the env so it correctly works for periodic boundaries, e.g. Pendulum
+
     config.PRETRAIN_HYPERPARAMS = False
     config.PRETRAIN_NUM_DATA = 10#00
-    config.NUM_INIT_DATA = 40 * 4  # 1
 
     config.LEARN_REWARD = False
+    # config.LEARN_REWARD = True
 
+    # config.SAVE_FIGURES = False
     config.SAVE_FIGURES = True
 
     config.TEST_SET_SIZE = 100#0
+
     config.NUM_EVAL_TRIALS = 5
     config.EVAL_FREQ = 10
 
@@ -32,9 +36,9 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    # config.AGENT_TYPE = "MPC"
+    config.AGENT_TYPE = "MPC"
     # config.AGENT_TYPE = "PILCO"
-    config.AGENT_TYPE = "TIP"
+    # config.AGENT_TYPE = "TIP"
     # config.AGENT_TYPE = "PETS"
 
     config.AGENT_CONFIG = {}

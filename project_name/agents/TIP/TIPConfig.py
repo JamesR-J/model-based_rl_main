@@ -4,6 +4,8 @@ from ml_collections import config_dict
 def get_TIP_config():
     config = config_dict.ConfigDict()
 
+    config.SYS_ID_DATA = 1
+
     config.PLANNING_HORIZON = 25
 
     config.INIT_VAR_DIVISOR = 4  # TODO what is this and where should it be?

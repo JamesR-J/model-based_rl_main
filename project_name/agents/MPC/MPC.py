@@ -39,7 +39,7 @@ class MPCAgent(AgentBase):
         self.dynamics_model = dynamics_models.MOSVGP(env, env_params, config, self.agent_config, key)
 
         self.obs_dim = len(self.env.observation_space(self.env_params).low)
-        self.action_dim = self.env.action_space().shape[0]
+        self.action_dim = self.env.action_space(self.env_params).shape[0]
         # TODO match this to the other rl main stuff
 
         self.n_keep = ceil(self.agent_config.XI * self.agent_config.N_ELITES)
@@ -142,7 +142,7 @@ class MPCAgent(AgentBase):
                                1, 2)  * jnp.sqrt(var) + mean
         # TODO test this powerlaw thing
         # samples = jrandom.normal(key, shape=(nsamples, horizon, self.action_dim)) * jnp.sqrt(var) + mean
-        samples = jnp.clip(samples, self.env.action_space().low, self.env.action_space().high)
+        samples = jnp.clip(samples, self.env.action_space(self.env_params).low, self.env.action_space(self.env_params).high)
         return samples
 
     @partial(jax.jit, static_argnums=(0,))
@@ -159,7 +159,7 @@ class MPCAgent(AgentBase):
     def _action_space_multi_sample(self, actions_per_plan, key):
         keys = jrandom.split(key, actions_per_plan * self.n_keep)
         keys = keys.reshape((actions_per_plan, self.n_keep))
-        sample_fn = lambda k: self.env.action_space().sample(rng=k)
+        sample_fn = lambda k: self.env.action_space(self.env_params).sample(rng=k)
         batched_sample = jax.vmap(sample_fn)
         actions = jax.vmap(batched_sample)(keys)
         return actions
@@ -264,7 +264,7 @@ class MPCAgent(AgentBase):
 
             # remake the mean for iCEM
             end_mean_SA = jnp.concatenate((best_mean_SA[actions_per_plan:], jnp.zeros((actions_per_plan, self.action_dim))))
-            end_var_SA = (jnp.ones_like(end_mean_SA) * ((self.env.action_space().high - self.env.action_space().low)
+            end_var_SA = (jnp.ones_like(end_mean_SA) * ((self.env.action_space(self.env_params).high - self.env.action_space(self.env_params).low)
                                                         / self.agent_config.INIT_VAR_DIVISOR) ** 2)
 
             return (curr_obs_O, end_mean_SA, end_var_SA, shifted_actions_BSA, key), MPCTransitionXYR(obs=planned_iCEM_traj_LX.obs,
@@ -276,8 +276,8 @@ class MPCAgent(AgentBase):
 
         outer_loop_steps = horizon // actions_per_plan
 
-        init_mean_S1 = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.env.action_space().shape[0]))
-        init_var_S1 = (jnp.ones_like(init_mean_S1) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
+        init_mean_S1 = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.env.action_space(self.env_params).shape[0]))
+        init_var_S1 = (jnp.ones_like(init_mean_S1) * ((self.env.action_space(self.env_params).high - self.env.action_space(self.env_params).low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
         shift_actions_BSA = jnp.zeros((self.n_keep, self.agent_config.PLANNING_HORIZON, self.action_dim))  # is this okay to add zeros?
 
         (_, _, _, _, key), overall_traj = jax.lax.scan(_outer_loop, (start_obs_O, init_mean_S1, init_var_S1, shift_actions_BSA, key), None, outer_loop_steps)
@@ -330,7 +330,7 @@ class MPCAgent(AgentBase):
             return mu
         return _postmean_fn
 
-    # @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,))
     def get_next_point(self, curr_obs_O, train_state, train_data, step_idx, key):
         key, _key = jrandom.split(key)
         action_1A, exe_path, _ = self.execute_mpc(self.make_postmean_func(), curr_obs_O, train_state, (train_data.X, train_data.y), _key, horizon=1, actions_per_plan=1)
@@ -338,8 +338,10 @@ class MPCAgent(AgentBase):
 
         exe_path = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=0), exe_path)
 
-        assert jnp.allclose(curr_obs_O, x_next_OPA[:self.obs_dim]), "For rollout cases, we can only give queries which are from the current state"
+        # assert jnp.allclose(curr_obs_O, x_next_OPA[:self.obs_dim]), "For rollout cases, we can only give queries which are from the current state"
         # TODO can we jax the assertion?
+
+        # jax.experimental.checkify
 
         return x_next_OPA, exe_path, curr_obs_O, train_state, None, key
 

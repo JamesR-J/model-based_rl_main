@@ -32,7 +32,7 @@ class NormalisedEnv(environment.Environment):
 
     def action_space(self, params=None) -> spaces.Box:
         """Action space of the environment."""
-        return spaces.Box(-1, 1, shape=(self.unnorm_action_space.shape[0],))
+        return spaces.Box(-1.0, 1.0, shape=(self.unnorm_action_space.shape[0],))
 
     def observation_space(self, params=None) -> spaces.Box:
         """Observation space of the environment."""
@@ -143,7 +143,7 @@ class GenerativeEnv(object):
         obs_st, state_st, reward, done, info = self._wrapper_env.generative_step_env(key, orig_obs, action, params)
         obs_re, state_re = self._wrapper_env.reset_env(key_reset, params)
         # Auto-reset environment based on termination
-        state = jax.tree_map(lambda x, y: jax.lax.select(done, x, y), state_re, state_st)
+        state = jax.tree.map(lambda x, y: jax.lax.select(done, x, y), state_re, state_st)
         obs = jax.lax.select(done, obs_re, obs_st)
         return obs, state, reward, done, info
 

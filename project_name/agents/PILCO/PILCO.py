@@ -66,10 +66,6 @@ class PILCOAgent(AgentBase):
         else:
             self._update_fn = update_obs_fn
 
-        self.m_init = jnp.reshape(jnp.array([0.0, 0.0]), (1, 2))
-        self.S_init = jnp.diag(jnp.array([0.03, 0.01]))
-        # TODO both above are for pendulum, can we generalise
-
     def create_train_state(self, init_data, key):
         train_state = {}
 
@@ -89,6 +85,9 @@ class PILCOAgent(AgentBase):
                                       jnp.zeros((self.obs_dim, self.obs_dim)))
         reward_train_state = TrainState.create(apply_fn=self.reward.apply, params=params, tx=self.tx)
         train_state["reward_train_state"] = reward_train_state
+
+        self.m_init = init_data.X[0:1, 0:self.obs_dim]
+        self.S_init = jnp.diag(jnp.ones(self.obs_dim) * 0.1)
 
         return train_state
 
@@ -285,14 +284,6 @@ class PILCOAgent(AgentBase):
                 s2 = jnp.concatenate([jnp.transpose(s_x @ c_xu), s_u], axis=1)
                 s = jnp.concatenate([s1, s2], axis=0)
 
-                # print(m)
-                # print(s)
-                # print(loss_train_data.X)
-                # print(loss_train_data.y)
-
-                # jnp.save("x_data.npy", loss_train_data.X)
-                # jnp.save("y_data.npy", loss_train_data.y)
-
                 M_dx, S_dx, C_dx = self.dynamics_model.predict_on_noisy_inputs(m, s,
                                                                                dynamics_params,
                                                                                loss_train_data)
@@ -301,9 +292,8 @@ class PILCOAgent(AgentBase):
 
                 new_reward = reward + jnp.squeeze(self.reward.apply(reward_params, m_x, s_x)[0], axis=0)
                 # TODO rewards get way too large, almost becoming much larger than 1
-                # TODO also there beomes nans in the prediction, but it seems to be accurate to original
+                # TODO also there becomes nans in the prediction, but it seems to be accurate to original
                 # TODO what is causing this to get too large? It appears driven by data selection, what are the data issues that cause it?
-                # TODO ie if I change the seed of the dataset then it can train fine and sometimes it does not
 
                 return (M_x, S_x, new_reward), new_reward
 
@@ -332,35 +322,44 @@ class PILCOAgent(AgentBase):
 
             return new_train_state, best_reward
 
-        # an initial optimisation
-        new_train_state, best_init_reward = optimisation_step(train_state)
+        # randomise controller for restarts
+        def randomise_controller(key):
+            controller = LinearController(self.obs_dim, self.action_dim, self.env.action_space(self.env_params).high,
+                                          w_init=nn.initializers.normal(stddev=1),
+                                          b_init=nn.initializers.normal(stddev=1))
+            # TODO a bit dodgy but may work for now
+            params = controller.init(key,
+                                     jnp.zeros((1, self.obs_dim)),
+                                     jnp.zeros((self.obs_dim, self.obs_dim)))
+            randomised_controller_state = TrainState.create(apply_fn=self.controller.apply, params=params, tx=self.tx)
+            return randomised_controller_state
 
-        # TODO add the below back in once the above works
-        # # do some vmap over some randomised params for the controller and run the above
-        # def randomise_restart(key):
-        #     controller = LinearController(self.obs_dim, self.action_dim, self.env.action_space().high,
-        #                                   w_init=nn.initializers.normal(stddev=1),
-        #                                   b_init=nn.initializers.normal(stddev=1))
-        #     # TODO a bit dodgy but may work for now
-        #     params = controller.init(key,
-        #                               jnp.zeros((1, self.obs_dim)),
-        #                               jnp.zeros((self.obs_dim, self.obs_dim)))
-        #     randomised_train_state = TrainState.create(apply_fn=self.controller.apply, params=params, tx=self.tx)
-        #     new_params, best_reward = optimisation_step(randomised_train_state)
-        #
-        #     return new_params, best_reward
-        #
-        # key, _key = jrandom.split(key)
-        # restart_key = jrandom.split(_key, restarts)
-        # randomised_controller_best_states, batch_rewards = jax.vmap(randomise_restart)(restart_key)
-        #
-        # all_rewards = jnp.concatenate((jnp.expand_dims(best_init_reward, axis=0), batch_rewards))
-        # all_controller_states = jax.tree_util.tree_map(lambda x, y: jnp.concatenate((jnp.expand_dims(x, axis=0), y)), new_controller_state, randomised_controller_best_states)
-        #
-        # best_reward_idx = jnp.argmax(all_rewards)
-        # new_controller_state = jax.tree_util.tree_map(lambda x: x[best_reward_idx], all_controller_states)
+        key, _key = jrandom.split(key)
+        restart_key = jrandom.split(_key, restarts)
+        randomised_controller = jax.vmap(randomise_controller)(restart_key)
+        # join randomised controller with our current known value
+        controller_states = jax.tree_util.tree_map(lambda x, y: jnp.concatenate((jnp.expand_dims(x, axis=0), y)),
+                                                       train_state["controller_train_state"],
+                                                       randomised_controller)
 
-        return new_train_state
+        # vmap over some randomised params for the controller and run the above
+        def randomise_restart(randomised_controller_state, overall_train_state):
+
+            overall_train_state["controller_train_state"] = randomised_controller_state
+            new_params, best_reward = optimisation_step(overall_train_state)
+
+            return new_params["controller_train_state"], best_reward
+
+        # perform optermisation vmapped over all possible controller states
+        randomised_controller_best_states, all_rewards = jax.vmap(randomise_restart, in_axes=(0, None))(controller_states,
+                                                                                                          train_state)
+        # sometimes training returns nans, unsure why but the below prevents
+        best_reward_idx = jnp.nanargmax(all_rewards)
+        # extract the best controller_state and use it for next batch of steps
+        new_controller_state = jax.tree_util.tree_map(lambda x: x[best_reward_idx], randomised_controller_best_states)
+        train_state["controller_train_state"] = new_controller_state
+
+        return train_state
 
     @partial(jax.jit, static_argnums=(0,))
     def compute_action(self, x_m, train_state):
@@ -371,8 +370,9 @@ class PILCOAgent(AgentBase):
         action_1A = self.controller.apply(train_state["controller_train_state"].params, curr_obs_O[None, :], jnp.zeros((self.obs_dim, self.obs_dim)))[0]
 
         if (step_idx + 1) % self.agent_config.PLANNING_HORIZON == 0:
-            # train_state["dynamics_train_state"] = self.dynamics_model.optimise_gp(train_data, train_state["dynamics_train_state"], key)
-            train_state = self._optimise_policy(train_state, train_data, key)
+            with jax.disable_jit(disable=False):
+                train_state["dynamics_train_state"] = self.dynamics_model.optimise_gp(train_data, train_state["dynamics_train_state"], key)
+                train_state = self._optimise_policy(train_state, train_data, key)
 
         x_next_OPA = jnp.concatenate((curr_obs_O, jnp.squeeze(action_1A, axis=0)), axis=-1)
         exe_path = {"exe_path_x": jnp.zeros((1, 10, 3)),

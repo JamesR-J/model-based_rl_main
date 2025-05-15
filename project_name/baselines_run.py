@@ -45,7 +45,8 @@ def run_train(config):
 
     low = jnp.concatenate([env.observation_space(env_params).low, jnp.expand_dims(jnp.array(env.action_space(env_params).low), axis=0)])
     high = jnp.concatenate([env.observation_space(env_params).high, jnp.expand_dims(jnp.array(env.action_space(env_params).high), axis=0)])
-    domain = [elt for elt in zip(low, high)]  # TODO something to refine this
+    domain = [elt for elt in zip(low, high)]
+    # TODO something to refine this
 
     if config.GENERATIVE_ENV:
         if config.TELEPORT:
@@ -55,18 +56,20 @@ def run_train(config):
     else:
         raise NotImplementedError("If not generative env then we do not have a mpc_func yet")
 
-    # set the initial obs, i.e. env.reset but able to set a consistent start point
+    # set the initial obs, i.e. env.reset
+    # TODO should be able to set a consistent start point defined in config
     start_obs, start_env_state = utils.get_start_obs(env, env_params, key)
 
     # add the actor
     key, _key = jrandom.split(key)
     actor = utils.import_class_from_folder(config.AGENT_TYPE)(env=env, env_params=env_params, config=config, key=_key)
 
-    # get some initial data for hyperparam tuning, unsure what else as of now? also a test set
+    # get some initial data for training/system identification. This should be agent specific
+    # TODO is it possible to have this equal to zero when using certain setups? Or set this to the start_obs
     key, _key = jrandom.split(key)
-    init_data_x, init_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
-                                                      config.NUM_INIT_DATA, _key, train=True)
-    init_dataset = gpjax.Dataset(init_data_x, init_data_y)
+    sys_id_data_x, syd_id_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
+                                                      actor.agent_config.SYS_ID_DATA, _key, train=True)
+    sys_id_dataset = gpjax.Dataset(sys_id_data_x, syd_id_data_y)
     # key, _key = jrandom.split(key)
     # test_data_x, test_data_y = utils.get_initial_data(config, mpc_func, plot_fn, low, high, domain, env, env_params,
     #                                                   config.NUM_INIT_DATA, _key)
@@ -78,13 +81,13 @@ def run_train(config):
                                                                   config.PRETRAIN_NUM_DATA, _key)
         pretrain_data = gpjax.Dataset(pretrain_data_x, pretrain_data_y)
         key, _key = jrandom.split(key)
-        train_state = actor.pretrain_params(init_dataset, pretrain_data, _key)
+        train_state = actor.pretrain_params(sys_id_dataset, pretrain_data, _key)
     else:
-        train_state = actor.create_train_state(init_dataset, _key)
+        train_state = actor.create_train_state(sys_id_dataset, _key)
         # TODO how does the above work if there is no data, can we use the start obs and a randoma action or nothing?
 
+    # get some groundtruth data for evaluation
     if actor.agent_config.ROLLOUT_SAMPLING:
-        # get some groundtruth data
         key, _key = jrandom.split(key)
         batch_key = jrandom.split(_key, config.NUM_EVAL_TRIALS)
         start_gt_time = time.time()
@@ -93,7 +96,7 @@ def run_train(config):
                                                               (start_obs,
                                                                mpc_func,
                                                                train_state,
-                                                               (init_dataset.X, init_dataset.y),
+                                                               (sys_id_dataset.X, sys_id_dataset.y),
                                                                batch_key))
         logging.info(f"Ground truth time taken = {time.time() - start_gt_time:.2f}s; "
                      f"Mean Return = {jnp.mean(all_returns):.2f}; Std Return = {jnp.std(all_returns):.2f}; "
@@ -146,7 +149,8 @@ def run_train(config):
                 utils.make_plots(plot_fn, domain,
                                  PlotTuple(x=true_paths["exe_path_x"][-1], y=true_paths["exe_path_y"][-1]),
                                  PlotTuple(x=train_data.X, y=train_data.y),
-                                 env, env_params, config, exe_path, real_paths_mpc, x_next_OPA, step_idx)
+                                 env, env_params, config, actor.agent_config, exe_path, real_paths_mpc, x_next_OPA,
+                                 step_idx)
 
             action_A = x_next_OPA[-action_dim:]
 
@@ -188,6 +192,6 @@ def run_train(config):
             curr_obs_O = nobs_O
             logging.info(f"Iteration time taken - {time.time() - step_start_time:.1f}s")
 
-    _main_loop(start_obs, init_dataset, train_state, start_env_state, key)
+    _main_loop(start_obs, sys_id_dataset, train_state, start_env_state, key)
 
     return

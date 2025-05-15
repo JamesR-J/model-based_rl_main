@@ -12,42 +12,25 @@ dependencies = [
     "matplotlib>=3.10.1",
     "neatplot>=0.1.0",
     "gymnax>=0.0.8",
-    "gpjax>=0.9.4",
-    "jax[cuda12_pip]<0.4.20",  # TODO this is due to some weird segmentation errors caused by jax 0.4.27???????
-    "scipy<=1.12.0,>=1.6.0",  # for the low jax package
+    "jax[cuda12_pip]==0.6.0",
     "jupyter>=1.1.1",
     "notebook>=7.3.3",
+    "gpjax>=0.11.0",
+    "tensorflow-probability>=0.25.0",
 ]
 
 #dependencies = [
 #    "absl-py>=2.1.0",
-#    "flax<=0.10.0",
 #    "ml-collections>=1.0.0",
 #    "wandb>=0.19.8",
 #    "matplotlib>=3.10.1",
 #    "neatplot>=0.1.0",
 #    "gymnax>=0.0.8",
-#    "tensorflow-probability>=0.25.0",
-#    "jaxtyping>=0.3.0",
-#    "jax[cuda12_pip]>=0.5.2",
-#]
-
-#dependencies = [
-#    "jax<0.4.28",
-#    "wandb>=0.19.6",
-#    "gymnasium>=1.0.0",
-#    "absl-py>=2.1.0",
-#    "ml-collections>=1.0.0",
-#    "tqdm>=4.67.1",
-#    "colorednoise>=2.2.0",
-#    "matplotlib>=3.10.0",
-#    "flax<0.10.0",
-#    "gymnax>=0.0.8",
-#    "chex>=0.1.89",
-#    "tensorflow-probability>=0.22.1",
-#    "multidispatch==0.2.0",
-#    "neatplot>=0.1.0",
-#    "gpjax==0.9.4",
+#    "gpjax>=0.9.4",
+##    "jax[cuda12_pip]<0.4.20",  # TODO this is due to some weird segmentation errors caused by jax 0.4.27???????
+#    "scipy<=1.12.0,>=1.6.0",  # for the low jax package
+#    "jupyter>=1.1.1",
+#    "notebook>=7.3.3",
 #]
 
 requires-python = "==3.10.*"

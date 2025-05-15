@@ -152,8 +152,8 @@ class MOSVGP(DynamicsModelBase):
         opt_posterior, _ = gpjax.fit(model=q,
                                      objective=lambda p, d: -gpjax.objectives.elbo(p, d),
                                      train_data=data,
-                                     # optim=optax.adam(learning_rate=self.agent_config.GP_LR),
-                                     optim=optax.adam(learning_rate=schedule),
+                                     optim=optax.adam(learning_rate=self.agent_config.GP_LR),
+                                     # optim=optax.adam(learning_rate=schedule),
                                      num_iters=self.agent_config.TRAIN_GP_NUM_ITERS,
                                      batch_size=128,
                                      safe=True,
@@ -176,7 +176,7 @@ class MOSVGP(DynamicsModelBase):
         XNew3D = self._adjust_dataset(gpjax.Dataset(XNew, jnp.zeros((XNew.shape[0], 2))))  # TODO separate this to be just X aswell
 
         latent_dist = opt_posterior.predict(XNew3D.X)
-        mu = latent_dist.mean()  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
+        mu = latent_dist.mean  # TODO I think this is pedict_f, predict_y would be passing the latent dist to the posterior.likelihood
         mu = mu.reshape(-1, self.obs_dim)
 
         std = latent_dist.stddev()

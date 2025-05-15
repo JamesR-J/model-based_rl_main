@@ -183,14 +183,22 @@ def get_initial_data(config, f, plot_fn, low, high, domain, env, env_params, n, 
     if train:
         ax_obs_init, fig_obs_init = plot_fn(path=None, domain=domain)
         if ax_obs_init is not None and config.SAVE_FIGURES:
-            plot(ax_obs_init, data_x_LOPA, "o", color="k", ms=1)
+            obs_dim = env.observation_space(env_params).low.size
+            x_data = data_x_LOPA
+            if config.NORMALISE_ENV:
+                norm_obs = x_data[..., :obs_dim]
+                unnorm_obs = env.unnormalise_obs(norm_obs)
+                action = x_data[..., obs_dim:]
+                unnorm_action = env.unnormalise_action(action)
+                x_data = jnp.concatenate([unnorm_obs, unnorm_action], axis=-1)
+            scatter(ax_obs_init, x_data, color="k", s=2)
             fig_obs_init.suptitle("Initial Observations")
             neatplot.save_figure("figures/obs_init", "png", fig=fig_obs_init)
-
     return data_x_LOPA, data_y_LO
 
 
-def make_plots(plot_fn, domain, true_path, data, env, env_params, config, exe_path_list, real_paths_mpc, x_next, i):
+def make_plots(plot_fn, domain, true_path, data, env, env_params, config, agent_config, exe_path_list, real_paths_mpc,
+               x_next, i):
     if len(data.x) == 0:
         return
     # Initialize various axes and figures
@@ -204,8 +212,8 @@ def make_plots(plot_fn, domain, true_path, data, env, env_params, config, exe_pa
     if ax_all is None:
         return
 
-    init_data = jax.tree_util.tree_map(lambda x: x[:config.NUM_INIT_DATA], data)
-    data = jax.tree_util.tree_map(lambda x: x[config.NUM_INIT_DATA:], data)
+    init_data = jax.tree_util.tree_map(lambda x: x[:agent_config.SYS_ID_DATA], data)
+    data = jax.tree_util.tree_map(lambda x: x[agent_config.SYS_ID_DATA:], data)
 
     # Plot init observations
     init_x_obs = make_plot_obs(init_data.x, env, env_params, config.NORMALISE_ENV)

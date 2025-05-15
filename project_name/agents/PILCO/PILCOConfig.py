@@ -4,6 +4,8 @@ from ml_collections import config_dict
 def get_PILCO_config():
     config = config_dict.ConfigDict()
 
+    config.SYS_ID_DATA = 40 * 4
+
     config.PLANNING_HORIZON = 25
 
     config.GAMMA = 1.25  # This is something else not discount value
@@ -12,7 +14,7 @@ def get_PILCO_config():
     config.LR = 1e-3
     config.POLICY_LR = 0.1
     config.PRETRAIN_RESTARTS = 5
-    config.TRAIN_GP_NUM_ITERS = 10#0#0
+    config.TRAIN_GP_NUM_ITERS = 100#0
     config.GP_LR = 0.01
     config.NUM_INDUCING_POINTS = 100
 
