@@ -13,12 +13,12 @@ from flax.training.train_state import TrainState
 
 # initialise agents from the config file deciding what the algorithms are
 class Agent:
-    def __init__(self, env, env_params, config, utils, key: chex.PRNGKey):  # TODO add better chex
+    def __init__(self, env, config, utils, key: chex.PRNGKey):  # TODO add better chex
         self.env = env
         self.config = config
         self.utils = utils
         self.agent_type = config.AGENT_TYPE
-        self.agent = import_class_from_folder(self.agent_type)(env=env, env_params=env_params, key=key, config=config, utils=utils)
+        self.agent = import_class_from_folder(self.agent_type)(env=env, key=key, config=config, utils=utils)
         self.train_state, self.mem_state = self.agent.create_train_state()
 
     @partial(jax.jit, static_argnums=(0,))

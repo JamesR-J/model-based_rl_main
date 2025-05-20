@@ -13,8 +13,8 @@ from functools import partial
 
 
 class NeuralNetDynamicsModel(DynamicsModelBase):
-    def __init__(self, env, env_params, config, agent_config, key):
-        super().__init__(env, env_params, config, agent_config, key)
+    def __init__(self, env, config, agent_config, key):
+        super().__init__(env, config, agent_config, key)
         # Do not import its own config, should inherit from the agent config
 
         self.network = SimpleNetwork(agent_config, self.obs_dim, self.action_dim)

@@ -122,51 +122,51 @@ def import_class_from_folder(folder_name):
         return None
 
 
-@partial(jax.jit, static_argnums=(1, 2))
-def get_f_mpc(x_OPA, env, env_params, train_state, train_data, key):
-    obs_1O = x_OPA[..., :env.obs_dim]
-    action_1A = x_OPA[..., env.obs_dim:]
+@partial(jax.jit, static_argnums=(1,))
+def get_f_mpc(x_OPA, env, train_state, train_data, key):
+    obs_1O = x_OPA[..., :env.observation_space().shape[-1]]
+    action_1A = x_OPA[..., env.observation_space().shape[-1]:]
     obs_O = jnp.squeeze(obs_1O, axis=0)
-    nobs_O, _, _, _, info = env.generative_step(key, obs_O, jnp.squeeze(action_1A, axis=0), env_params)
+    nobs_O, _, _, _, info = env.generative_step(jnp.squeeze(action_1A, axis=0), obs_O, key)
     return nobs_O - obs_O
 
-@partial(jax.jit, static_argnums=(1, 2))
-def get_f_mpc_teleport(x_OPA, env, env_params, train_state, train_data, key):
-    obs_1O = x_OPA[..., :env.obs_dim]
-    action_1A = x_OPA[..., env.obs_dim:]
+@partial(jax.jit, static_argnums=(1,))
+def get_f_mpc_teleport(x_OPA, env, train_state, train_data, key):
+    obs_1O = x_OPA[..., :env.observation_space().shape[-1]]
+    action_1A = x_OPA[..., env.observation_space().shape[-1]:]
     obs_O = jnp.squeeze(obs_1O, axis=0)
-    _, _, _, _, info = env.generative_step(key, obs_O, jnp.squeeze(action_1A, axis=0), env_params)
+    _, _, _, _, info = env.generative_step(jnp.squeeze(action_1A, axis=0), obs_O, key)
     return info["delta_obs"]
 
-@partial(jax.jit, static_argnums=(2, 3))
-def update_obs_fn(x, y, env, env_params):
-    start_obs = x[..., :env.obs_dim]
-    delta_obs = y[..., -env.obs_dim:]  # TODO check this okay if add stuff to the y, potentially reward
+@partial(jax.jit, static_argnums=(2,))
+def update_obs_fn(x, y, env):
+    start_obs = x[..., :env.observation_space().shape[-1]]
+    delta_obs = y[..., -env.observation_space().shape[-1]:]  # TODO check this okay if add stuff to the y, potentially reward
     output = start_obs + delta_obs
     return output
 
-@partial(jax.jit, static_argnums=(2, 3))
-def update_obs_fn_teleport(x, y, env, env_params):
-    start_obs = x[..., :env.obs_dim]
-    delta_obs = y[..., -env.obs_dim:]
+@partial(jax.jit, static_argnums=(2,))
+def update_obs_fn_teleport(x, y, env):
+    start_obs = x[..., :env.observation_space().shape[-1]]
+    delta_obs = y[..., -env.observation_space().shape[-1]:]
     output = start_obs + delta_obs
 
-    shifted_output_og = output - env.observation_space(env_params).low
-    obs_range = env.observation_space(env_params).high - env.observation_space(env_params).low
+    shifted_output_og = output - env.observation_space().low
+    obs_range = env.observation_space().high - env.observation_space().low
     shifted_output = jnp.remainder(shifted_output_og, obs_range)
     modded_output = shifted_output_og + (env.periodic_dim * shifted_output) - (env.periodic_dim * shifted_output_og)
-    wrapped_output = modded_output + env.observation_space(env_params).low
+    wrapped_output = modded_output + env.observation_space().low
     return wrapped_output
 
 
-def get_start_obs(env, env_params, key):  # TODO some if statement if have some fixed start point
+def get_start_obs(env, key):  # TODO some if statement if have some fixed start point
     key, _key = jrandom.split(key)
-    obs, env_state = env.reset(_key, env_params)
+    obs, env_state = env.reset(_key)
     logging.info(f"Start obs: {obs}")
     return obs, env_state
 
 
-def get_initial_data(config, f, plot_fn, low, high, domain, env, env_params, n, key, train=False):
+def get_initial_data(config, f, plot_fn, low, high, domain, env, n, key, train=False):
     def unif_random_sample_domain(low, high, key, n=1):
         unscaled_random_sample = jrandom.uniform(key, shape=(n, low.shape[0]))
         scaled_random_sample = low + (high - low) * unscaled_random_sample
@@ -176,7 +176,7 @@ def get_initial_data(config, f, plot_fn, low, high, domain, env, env_params, n, 
     data_x_L1OPA = jnp.expand_dims(data_x_LOPA, axis=1)  # TODO kinda a dodgy fix
     if config.GENERATIVE_ENV:
         batch_key = jrandom.split(key, n)
-        data_y_LO = jax.vmap(f, in_axes=(0, None, None, None, None, 0))(data_x_L1OPA, env, env_params, None, None, batch_key)
+        data_y_LO = jax.vmap(f, in_axes=(0, None, None, None, 0))(data_x_L1OPA, env, None, None, batch_key)
     else:
         raise NotImplementedError("If not generative env then we have to output nothing, unsure how to do in Jax")
 
@@ -184,7 +184,7 @@ def get_initial_data(config, f, plot_fn, low, high, domain, env, env_params, n, 
     if train:
         ax_obs_init, fig_obs_init = plot_fn(path=None, domain=domain)
         if ax_obs_init is not None and config.SAVE_FIGURES:
-            obs_dim = env.observation_space(env_params).low.size
+            obs_dim = env.observation_space().low.size
             x_data = data_x_LOPA
             if config.NORMALISE_ENV:
                 norm_obs = x_data[..., :obs_dim]
@@ -198,7 +198,7 @@ def get_initial_data(config, f, plot_fn, low, high, domain, env, env_params, n, 
     return data_x_LOPA, data_y_LO
 
 
-def make_plots(plot_fn, domain, true_path, data, env, env_params, config, agent_config, exe_path_list, real_paths_mpc,
+def make_plots(plot_fn, domain, true_path, data, env, config, agent_config, exe_path_list, real_paths_mpc,
                x_next, i):
     if len(data.x) == 0:
         return
@@ -217,11 +217,11 @@ def make_plots(plot_fn, domain, true_path, data, env, env_params, config, agent_
     data = jax.tree_util.tree_map(lambda x: x[agent_config.SYS_ID_DATA:], data)
 
     # Plot init observations
-    init_x_obs = make_plot_obs(init_data.x, env, env_params, config.NORMALISE_ENV)
+    init_x_obs = make_plot_obs(init_data.x, env, config.NORMALISE_ENV)
     scatter(ax_all, init_x_obs, color="grey", s=10, alpha=0.2)
 
     # Plot observations
-    x_obs = make_plot_obs(data.x, env, env_params, config.NORMALISE_ENV)
+    x_obs = make_plot_obs(data.x, env, config.NORMALISE_ENV)
     scatter(ax_all, x_obs, color="green", s=10, alpha=0.4)
     plot(ax_obs, x_obs, "o", color="k", ms=1)
 
@@ -238,7 +238,7 @@ def make_plots(plot_fn, domain, true_path, data, env, env_params, config, agent_
         ax_postmean, fig_postmean = plot_fn(path, ax_postmean, fig_postmean, domain, "samp")
 
     # Plot x_next
-    x = make_plot_obs(x_next, env, env_params, config.NORMALISE_ENV)
+    x = make_plot_obs(x_next, env, config.NORMALISE_ENV)
     scatter(ax_all, x, facecolors="deeppink", edgecolors="k", s=120, zorder=100)
     plot(ax_obs, x, "o", mfc="deeppink", mec="k", ms=12, zorder=100)
 

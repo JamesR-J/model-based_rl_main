@@ -49,16 +49,16 @@ class SeparateIndependent(gpjax.kernels.stationary.StationaryKernel):
 
 
 class MOSVGP(DynamicsModelBase):
-    def __init__(self, env, env_params, config, agent_config, key):
-        super().__init__(env, env_params, config, agent_config, key)
+    def __init__(self, env, config, agent_config, key):
+        super().__init__(env, config, agent_config, key)
 
         key, _key = jrandom.split(key)
         samples = jrandom.uniform(key, shape=(self.agent_config.NUM_INDUCING_POINTS, self.obs_dim + self.action_dim),
                                   minval=0.0, maxval=1.0)
-        low = jnp.concatenate([env.observation_space(env_params).low,
-                               jnp.expand_dims(jnp.array(env.action_space(env_params).low), axis=0)])
-        high = jnp.concatenate([env.observation_space(env_params).high,
-                                jnp.expand_dims(jnp.array(env.action_space(env_params).high), axis=0)])
+        low = jnp.concatenate([env.observation_space().low,
+                               jnp.expand_dims(jnp.array(env.action_space().low), axis=0)])
+        high = jnp.concatenate([env.observation_space().high,
+                                jnp.expand_dims(jnp.array(env.action_space().high), axis=0)])
         # TODO this is general maybe can put somewhere else
         self.og_z = low + (high - low) * samples
         self.z = self._adjust_dataset(gpjax.Dataset(self.og_z, jnp.zeros((self.og_z.shape[0], self.obs_dim))))

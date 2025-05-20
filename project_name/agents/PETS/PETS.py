@@ -31,11 +31,11 @@ class PETSAgent(MPCAgent):
     Just uses ensemble of NN as a dynamics model and runs out an MPC plan using (i)CEM
     """
 
-    def __init__(self, env, env_params, config, key):
-        super().__init__(env, env_params, config, key)
+    def __init__(self, env, config, key):
+        super().__init__(env, config, key)
         self.agent_config = get_PETS_config()
 
-        self.dynamics_model = dynamics_models.NeuralNetDynamicsModel(env, env_params, config, self.agent_config, key)
+        self.dynamics_model = dynamics_models.NeuralNetDynamicsModel(env, config, self.agent_config, key)
 
     def create_train_state(self, init_data, key):
         return self.dynamics_model.create_train_state(init_data, key)
@@ -178,7 +178,7 @@ class PETSAgent(MPCAgent):
 
         # add in some test values
         key, _key = jrandom.split(key)
-        x_test = jnp.concatenate((curr_obs_O, self.env.action_space(self.env_params).sample(_key)))
+        x_test = jnp.concatenate((curr_obs_O, self.env.action_space().sample(_key)))
         # TODO do we need to use a test set or something adjacent?
 
         key, _key = jrandom.split(key)

@@ -49,8 +49,8 @@ class SeparateIndependent(gpjax.kernels.stationary.StationaryKernel):
 
 
 class MOGP(DynamicsModelBase):
-    def __init__(self, env, env_params, config, agent_config, key):
-        super().__init__(env, env_params, config, agent_config, key)
+    def __init__(self, env, config, agent_config, key):
+        super().__init__(env, config, agent_config, key)
 
         kernel = SeparateIndependent(lengthscale1 = jnp.array((2.81622296,   9.64035469, 142.60660018)),
                                      lengthscale2 = jnp.array((0.92813981, 280.24169475,  14.85778016)),

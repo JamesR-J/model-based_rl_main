@@ -6,10 +6,9 @@ import jax.numpy as jnp
 
 
 class AgentBase:  # TODO sort this oot
-    def __init__(self, env, env_params, config, key):
+    def __init__(self, env, config, key):
         self.config = config
         self.env = env
-        self.env_params = env_params
 
     def create_train_state(self, init_data, key):
         raise NotImplementedError

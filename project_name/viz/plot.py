@@ -199,8 +199,8 @@ def noop(*args, ax=None, fig=None, **kwargs):
     )
 
 
-def make_plot_obs(data, env, env_params, normalize_obs):
-    obs_dim = env.observation_space(env_params).low.size
+def make_plot_obs(data, env, normalize_obs):
+    obs_dim = env.observation_space().low.size
     x_data = np.array(data)
     if normalize_obs:
         norm_obs = x_data[..., :obs_dim]

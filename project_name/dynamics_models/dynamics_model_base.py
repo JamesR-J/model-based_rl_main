@@ -6,14 +6,13 @@ import jax.numpy as jnp
 
 
 class DynamicsModelBase:  # TODO sort this oot
-    def __init__(self, env, env_params, config, agent_config, key):
+    def __init__(self, env, config, agent_config, key):
         self.config = config
         self.env = env
-        self.env_params = env_params
         self.agent_config = agent_config
 
-        self.obs_dim = env.obs_dim
-        self.action_dim = self.env.action_space(env_params).shape[0]
+        self.obs_dim = env.observation_space().shape[-1]
+        self.action_dim = env.action_space().shape[0]
         self.input_dim = self.obs_dim + self.action_dim
         if config.LEARN_REWARD:
             self.output_dim = self.obs_dim + 1  # TODO is it just one?

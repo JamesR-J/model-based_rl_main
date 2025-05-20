@@ -40,18 +40,18 @@ with install_import_hook("gpjax", "beartype.beartype"):
 
 class PILCOAgent(AgentBase):
 
-    def __init__(self, env, env_params, config, key):
-        super().__init__(env, env_params, config, key)
+    def __init__(self, env, config, key):
+        super().__init__(env, config, key)
         self.agent_config = get_PILCO_config()
 
         # TODO add some import from folder check thingo
-        self.dynamics_model = dynamics_models.MOSVGP(env, env_params, config, self.agent_config, key)
+        self.dynamics_model = dynamics_models.MOSVGP(env, config, self.agent_config, key)
 
-        self.obs_dim = len(self.env.observation_space(self.env_params).low)
-        self.action_dim = self.env.action_space(env_params).shape[0]
+        self.obs_dim = len(self.env.observation_space().low)
+        self.action_dim = self.env.action_space().shape[0]
         # TODO match this to the other rl main stuff
 
-        self.controller = LinearController(self.obs_dim, self.action_dim, self.env.action_space(env_params).high)
+        self.controller = LinearController(self.obs_dim, self.action_dim, self.env.action_space().high)
         self.reward = ExponentialReward(self.obs_dim,
                                         w_init=lambda x, y: jnp.reshape(jnp.diag(jnp.array([2.0, 0.3])), (self.obs_dim, self.obs_dim)),
                                         t_init=lambda x, y: jnp.reshape(jnp.array([0.0, 0.0]), (1, self.obs_dim)))
@@ -325,7 +325,7 @@ class PILCOAgent(AgentBase):
 
         # randomise controller for restarts
         def randomise_controller(key):
-            controller = LinearController(self.obs_dim, self.action_dim, self.env.action_space(self.env_params).high,
+            controller = LinearController(self.obs_dim, self.action_dim, self.env.action_space().high,
                                           w_init=nn.initializers.normal(stddev=1),
                                           b_init=nn.initializers.normal(stddev=1))
             # TODO a bit dodgy but may work for now
@@ -402,12 +402,12 @@ class PILCOAgent(AgentBase):
             action_1A = self.controller.apply(train_state["controller_train_state"].params, obs_O[None, :], jnp.zeros((self.obs_dim, self.obs_dim)))[0]
             action_A = jnp.squeeze(action_1A, axis=0)
             key, _key = jrandom.split(key)
-            nobs_O, new_env_state, reward, done, info = self.env.step(_key, env_state, action_A, self.env_params)
+            nobs_O, new_env_state, reward, done, info = self.env.step(_key, env_state, action_A)
             return (nobs_O, new_env_state, key), (nobs_O, reward, action_A)
 
         key, _key = jrandom.split(key)
         _, (nobs_SO, real_rewards_S, real_actions_SA) = jax.lax.scan(_env_step, (start_obs, start_env_state, _key),
-                                                                     None, self.env_params.horizon)
+                                                                     None, self.env.horizon)
 
         real_obs_SP1O = jnp.concatenate((jnp.expand_dims(start_obs, axis=0), nobs_SO))
         real_returns_1 = self._compute_returns(jnp.expand_dims(real_rewards_S, axis=0))
