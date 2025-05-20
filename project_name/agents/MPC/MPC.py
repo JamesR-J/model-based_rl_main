@@ -171,7 +171,7 @@ class MPCAgent(AgentBase):
         return jnp.polyval(rewards.T, self.agent_config.DISCOUNT_FACTOR)  # TODO check discount factor does not change
 
     @partial(jax.jit, static_argnums=(0, 1, 6, 7))
-    def run_algorithm_on_f(self, f, start_obs_O, train_state, train_data, key, horizon, actions_per_plan):
+    def run_algorithm_on_f(self, f, start_obs_O, start_env_state, train_state, train_data, key, horizon, actions_per_plan):
 
         def _outer_loop(outer_loop_state, unused):
             init_obs_O, init_mean_SA, init_var_S1, init_shift_actions_BSA, key = outer_loop_state
@@ -189,18 +189,20 @@ class MPCAgent(AgentBase):
 
                 def _run_single_sample_planning_horizon(init_samples_S1, key):
                     def _run_single_timestep(runner_state, actions_A):
-                        obs_O, key = runner_state
+                        obs_O, env_state, key = runner_state
                         obsacts_OPA = jnp.concatenate((obs_O, actions_A))
                         key, _key = jrandom.split(key)
-                        data_y_O = f(jnp.expand_dims(obsacts_OPA, axis=0), self.env, train_state, train_data, _key)
+                        data_y_O, next_env_state = f(jnp.expand_dims(obsacts_OPA, axis=0), self.env, train_state, train_data, _key)
                         nobs_O = self._update_fn(obsacts_OPA, data_y_O, self.env)
-                        reward = self.env.reward_function(obsacts_OPA, nobs_O)
-                        return (nobs_O, key), MPCTransitionXY(obs=nobs_O,
+                        # reward = self.env.reward_function(obsacts_OPA, nobs_O)
+                        reward = self.env.reward_function(actions_A, env_state, next_env_state, key)
+                        # TODO is this the best way to do it?
+                        return (nobs_O, next_env_state, key), MPCTransitionXY(obs=nobs_O,
                                                               action=actions_A,
                                                               reward=jnp.expand_dims(reward, axis=-1),
                                                               x=obsacts_OPA, y=data_y_O)
 
-                    return jax.lax.scan(_run_single_timestep, (init_obs_O, key), init_samples_S1,
+                    return jax.lax.scan(_run_single_timestep, (init_obs_O, start_env_state, key), init_samples_S1,
                                         self.agent_config.PLANNING_HORIZON)
 
                 init_actions_BSA = jnp.concatenate((init_candidate_actions_BSA, init_shift_actions_BSA), axis=0)

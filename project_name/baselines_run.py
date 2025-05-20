@@ -57,8 +57,9 @@ def run_train(config):
     domain = jnp.concatenate((jnp.expand_dims(low, axis=-1), jnp.expand_dims(high, axis=-1)), axis=-1)
 
     if config.GENERATIVE_ENV:
-        mpc_func = utils.get_f_mpc
+        mpc_func = utils.generative_env_transition
     else:
+        mpc_func = utils.env_transition
         # TODO add in the usual step as a function if possible, may need some major reworking
         raise NotImplementedError("If not generative env then we do not have a mpc_func yet")
 
