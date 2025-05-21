@@ -77,7 +77,7 @@ class MOSVGP(DynamicsModelBase):
         mean = gpjax.mean_functions.Constant(jnp.array((0.07455202985890419)))
         prior = gpjax.gps.Prior(mean_function=mean, kernel=kernel)
         self.variational_posterior_builder = lambda n: gpjax.variational_families.VariationalGaussian(posterior=prior * gpjax.likelihoods.Gaussian(num_datapoints=n,
-                                                                       obs_stddev=gpjax.parameters.PositiveReal(jnp.array(jnp.sqrt(0.01)))), inducing_inputs=self.z.X)
+                                                                       obs_stddev=jnp.sqrt(0.01)), inducing_inputs=self.z.X)
 
 
     def create_train_state(self, init_data, key):

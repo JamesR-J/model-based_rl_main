@@ -159,12 +159,11 @@ class GenerativeEnv(object):
 
 def make_normalised_plot_fn(norm_env, plot_fn):
     obs_dim = norm_env.observation_space().low.size
-    wrapped_env = norm_env.wrapped_env
     # Set domain
-    low = np.concatenate([wrapped_env.observation_space().low,
-                          np.expand_dims(np.array(wrapped_env.action_space().low), axis=0)])
-    high = np.concatenate([wrapped_env.observation_space().high,
-                           np.expand_dims(np.array(wrapped_env.action_space().high), axis=0)])
+    low = np.concatenate([norm_env.unnorm_observation_space.low,
+                          np.expand_dims(np.array(norm_env.unnorm_action_space.low), axis=0)])
+    high = np.concatenate([norm_env.unnorm_observation_space.high,
+                           np.expand_dims(np.array(norm_env.unnorm_action_space.high), axis=0)])
     unnorm_domain = [elt for elt in zip(low, high)]
 
     def norm_plot_fn(path, ax=None, fig=None, domain=None, path_str="samp", env=None):

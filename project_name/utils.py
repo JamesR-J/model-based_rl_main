@@ -34,16 +34,17 @@ class Transition(NamedTuple):
     # env_state: Any  # TODO added this but can change
     info: jnp.ndarray
 
-
 class MPCTransition(NamedTuple):
     obs: jnp.ndarray
     action:jnp.ndarray
     reward:jnp.ndarray
+    env_state: jnp.ndarray
 
 class MPCTransitionXY(NamedTuple):
     obs: jnp.ndarray
     action:jnp.ndarray
     reward:jnp.ndarray
+    env_state: jnp.ndarray
     x: jnp.ndarray
     y: jnp.ndarray
 
@@ -51,6 +52,7 @@ class MPCTransitionXYR(NamedTuple):
     obs: jnp.ndarray
     action:jnp.ndarray
     reward:jnp.ndarray
+    env_state: jnp.ndarray
     x: jnp.ndarray
     y: jnp.ndarray
     returns: jnp.ndarray
@@ -122,41 +124,16 @@ def import_class_from_folder(folder_name):
         return None
 
 
-@partial(jax.jit, static_argnums=(1,))
-def generative_env_transition(x_OPA, env, train_state, train_data, key):
-    obs_1O = x_OPA[..., :env.observation_space().shape[-1]]
-    action_1A = x_OPA[..., env.observation_space().shape[-1]:]
-    obs_O = jnp.squeeze(obs_1O, axis=0)
-    nobs_O, env_state, _, _, _ = env.generative_step(jnp.squeeze(action_1A, axis=0), obs_O, key)
-    return nobs_O, env_state
+@partial(jax.jit, static_argnums=(2,))
+def generative_env_transition(obs_O, action_A, env, env_state, train_state, train_data, key):
+    nobs_O, delta_obs_O, new_env_state, _, _, _ = env.generative_step(action_A, obs_O, key)
+    return nobs_O, delta_obs_O, new_env_state
 
-@partial(jax.jit, static_argnums=(1,))
-def env_transition(x_OPA, env, train_state, train_data, key):
-    obs_1O = x_OPA[..., :env.observation_space().shape[-1]]
-    action_1A = x_OPA[..., env.observation_space().shape[-1]:]
-    obs_O = jnp.squeeze(obs_1O, axis=0)
-    nobs_O, env_state, _, _, _ = env.generative_step(jnp.squeeze(action_1A, axis=0), obs_O, key)
-    return nobs_O, env_state
 
 @partial(jax.jit, static_argnums=(2,))
-def update_obs_fn(x, y, env):
-    start_obs = x[..., :env.observation_space().shape[-1]]
-    delta_obs = y[..., -env.observation_space().shape[-1]:]  # TODO check this okay if add stuff to the y, potentially reward
-    output = start_obs + delta_obs
-    return output
-
-@partial(jax.jit, static_argnums=(2,))
-def update_obs_fn_teleport(x, y, env):
-    start_obs = x[..., :env.observation_space().shape[-1]]
-    delta_obs = y[..., -env.observation_space().shape[-1]:]
-    output = start_obs + delta_obs
-
-    shifted_output_og = output - env.observation_space().low
-    obs_range = env.observation_space().high - env.observation_space().low
-    shifted_output = jnp.remainder(shifted_output_og, obs_range)
-    modded_output = shifted_output_og + (env.periodic_dim * shifted_output) - (env.periodic_dim * shifted_output_og)
-    wrapped_output = modded_output + env.observation_space().low
-    return wrapped_output
+def env_transition(obs_O, action_A, env, env_state, train_state, train_data, key):
+    nobs_O, delta_obs_O, new_env_state, _, _, _ = env.step(action_A, env_state, key)
+    return nobs_O, delta_obs_O, new_env_state
 
 
 def get_start_obs(env, key):  # TODO some if statement if have some fixed start point
@@ -173,11 +150,13 @@ def get_initial_data(config, f, plot_fn, low, high, domain, env, n, key, train=F
         return scaled_random_sample
 
     data_x_LOPA = unif_random_sample_domain(low, high, key, n)
-    data_x_L1OPA = jnp.expand_dims(data_x_LOPA, axis=1)  # TODO kinda a dodgy fix
+    obs_LO = data_x_LOPA[..., :env.observation_space().shape[-1]]
+    action_LA = data_x_LOPA[..., env.observation_space().shape[-1]:]
     if config.GENERATIVE_ENV:
         batch_key = jrandom.split(key, n)
-        data_y_LO, _ = jax.vmap(f, in_axes=(0, None, None, None, 0))(data_x_L1OPA, env, None, None, batch_key)
+        _, data_y_LO, _ = jax.vmap(f, in_axes=(0, 0, None, None, None, None, 0))(obs_LO, action_LA, env, None, None, None, batch_key)
     else:
+        # TODO add some initial sequential data collection maybe, or just add one idk?
         raise NotImplementedError("If not generative env then we have to output nothing, unsure how to do in Jax")
 
     # Plot initial data
@@ -187,10 +166,8 @@ def get_initial_data(config, f, plot_fn, low, high, domain, env, n, key, train=F
             obs_dim = env.observation_space().low.size
             x_data = data_x_LOPA
             if config.NORMALISE_ENV:
-                norm_obs = x_data[..., :obs_dim]
-                unnorm_obs = env.unnormalise_obs(norm_obs)
-                action = x_data[..., obs_dim:]
-                unnorm_action = env.unnormalise_action(action)
+                unnorm_obs = env.unnormalise_obs(data_x_LOPA[..., :obs_dim])
+                unnorm_action = env.unnormalise_action(data_x_LOPA[..., obs_dim:])
                 x_data = jnp.concatenate([unnorm_obs, unnorm_action], axis=-1)
             scatter(ax_obs_init, x_data, color="k", s=2)
             fig_obs_init.suptitle("Initial Observations")

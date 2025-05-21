@@ -12,7 +12,7 @@ from functools import partial
 import jax.random as jrandom
 from project_name.utils import MPCTransition, MPCTransitionXY, MPCTransitionXYR
 from project_name.config import get_config
-from project_name.utils import update_obs_fn, update_obs_fn_teleport, get_f_mpc, get_f_mpc_teleport
+# from project_name.utils import update_obs_fn, update_obs_fn_teleport, get_f_mpc, get_f_mpc_teleport
 from project_name import dynamics_models
 from jaxtyping import Float, install_import_hook
 from project_name import utils
@@ -45,10 +45,10 @@ class MPCAgent(AgentBase):
 
         self.n_keep = ceil(self.agent_config.XI * self.agent_config.N_ELITES)
 
-        if config.TELEPORT:
-            self._update_fn = update_obs_fn_teleport
-        else:
-            self._update_fn = update_obs_fn
+        # if config.TELEPORT:
+        #     self._update_fn = utils.update_obs_fn_teleport
+        # else:
+        #     self._update_fn = utils.update_obs_fn
 
     def create_train_state(self, init_data, key):
         return self.dynamics_model.create_train_state(init_data, key)
@@ -170,11 +170,11 @@ class MPCAgent(AgentBase):
         # TODO compare against old np.polynomial.polynomial.polyval(discount_factor, rewards)
         return jnp.polyval(rewards.T, self.agent_config.DISCOUNT_FACTOR)  # TODO check discount factor does not change
 
-    @partial(jax.jit, static_argnums=(0, 1, 6, 7))
+    @partial(jax.jit, static_argnums=(0, 1, 7, 8))
     def run_algorithm_on_f(self, f, start_obs_O, start_env_state, train_state, train_data, key, horizon, actions_per_plan):
 
         def _outer_loop(outer_loop_state, unused):
-            init_obs_O, init_mean_SA, init_var_S1, init_shift_actions_BSA, key = outer_loop_state
+            init_obs_O, init_env_state, init_mean_SA, init_var_S1, init_shift_actions_BSA, key = outer_loop_state
 
             def _iter_iCEM(iCEM_iter_state, unused):
                 mean_SA, var_SA, key = iCEM_iter_state
@@ -188,21 +188,20 @@ class MPCAgent(AgentBase):
                                                                          var_SA)
 
                 def _run_single_sample_planning_horizon(init_samples_S1, key):
-                    def _run_single_timestep(runner_state, actions_A):
+                    def _run_single_timestep(runner_state, action_A):
                         obs_O, env_state, key = runner_state
-                        obsacts_OPA = jnp.concatenate((obs_O, actions_A))
+                        obsacts_OPA = jnp.concatenate((obs_O, action_A))
                         key, _key = jrandom.split(key)
-                        data_y_O, next_env_state = f(jnp.expand_dims(obsacts_OPA, axis=0), self.env, train_state, train_data, _key)
-                        nobs_O = self._update_fn(obsacts_OPA, data_y_O, self.env)
-                        # reward = self.env.reward_function(obsacts_OPA, nobs_O)
-                        reward = self.env.reward_function(actions_A, env_state, next_env_state, key)
-                        # TODO is this the best way to do it?
+                        nobs_O, delta_obs_O, next_env_state = f(obs_O, action_A, self.env, env_state, train_state, train_data, _key)
+                        reward = self.env.reward_function(action_A, env_state, next_env_state, key)
                         return (nobs_O, next_env_state, key), MPCTransitionXY(obs=nobs_O,
-                                                              action=actions_A,
-                                                              reward=jnp.expand_dims(reward, axis=-1),
-                                                              x=obsacts_OPA, y=data_y_O)
+                                                                              action=action_A,
+                                                                              reward=jnp.expand_dims(reward, axis=-1),
+                                                                              env_state=next_env_state,
+                                                                              x=obsacts_OPA,
+                                                                              y=delta_obs_O)
 
-                    return jax.lax.scan(_run_single_timestep, (init_obs_O, start_env_state, key), init_samples_S1,
+                    return jax.lax.scan(_run_single_timestep, (init_obs_O, init_env_state, key), init_samples_S1,
                                         self.agent_config.PLANNING_HORIZON)
 
                 init_actions_BSA = jnp.concatenate((init_candidate_actions_BSA, init_shift_actions_BSA), axis=0)
@@ -224,8 +223,11 @@ class MPCAgent(AgentBase):
                 mpc_transition_xy_BSX = MPCTransitionXY(obs=planning_traj_BSX.obs[elite_idx],
                                                         action=planning_traj_BSX.action[elite_idx],
                                                         reward=planning_traj_BSX.reward[elite_idx],
+                                                        env_state=jax.tree.map(lambda x: jnp.expand_dims(x[elite_idx], axis=-1), planning_traj_BSX.env_state),
                                                         x=planning_traj_BSX.x[elite_idx],
                                                         y=planning_traj_BSX.y[elite_idx])
+                # mpc_transition_xy_BSX = jax.tree.map(lambda x: x[elite_idx], planning_traj_BSX)
+                # TODO I think the above is the same, instantiate once checked the new envs work
 
                 return (new_mean_SA, new_var_SA, key), mpc_transition_xy_BSX
 
@@ -235,25 +237,23 @@ class MPCAgent(AgentBase):
                                                                              self.agent_config.iCEM_ITERS)
 
             iCEM_traj_minus_xy_RISX = MPCTransition(obs=iCEM_traj_RISX.obs,
-                                               action=iCEM_traj_RISX.action,
-                                               reward=iCEM_traj_RISX.reward)
-            iCEM_traj_minus_xy_BSX = jax.tree_util.tree_map(lambda x: jnp.reshape(x,
-                                                                                  (x.shape[0] * x.shape[1],
-                                                                                   x.shape[2], x.shape[3])),
-                                                            iCEM_traj_minus_xy_RISX)
+                                                    action=iCEM_traj_RISX.action,
+                                                    reward=iCEM_traj_RISX.reward,
+                                                    env_state=iCEM_traj_RISX.env_state,)
+            iCEM_traj_minus_xy_BSX = jax.tree.map(lambda x: jnp.reshape(x,(x.shape[0] * x.shape[1], x.shape[2], x.shape[3])),
+                                                  iCEM_traj_minus_xy_RISX)
 
             # find the best sample from iCEM
             all_returns_B = self._compute_returns(jnp.squeeze(iCEM_traj_minus_xy_BSX.reward, axis=-1))
             best_sample_idx = jnp.argmax(all_returns_B)
             best_iCEM_traj_SX = jax.tree_util.tree_map(lambda x: x[best_sample_idx], iCEM_traj_minus_xy_BSX)
-            # TODO unsure if this is necessary as the below could also work fine
-            # best_iCEM_traj_SX = jax.tree_util.tree_map(lambda x: x[-1, 0], iCEM_traj_RISX)
 
             # take the number of actions of that plan and add to the existing plan
             planned_iCEM_traj_LX = jax.tree_util.tree_map(lambda x: x[:actions_per_plan], best_iCEM_traj_SX)
 
-            # shift obs
+            # shift obs and env_state
             curr_obs_O = best_iCEM_traj_SX.obs[actions_per_plan-1]
+            curr_env_state = jax.tree.map(lambda x: jnp.squeeze(x[actions_per_plan-1], axis=-1), best_iCEM_traj_SX.env_state)
 
             # shift actions
             keep_indices = jnp.argsort(all_returns_B)[-self.n_keep:]
@@ -270,9 +270,10 @@ class MPCAgent(AgentBase):
             end_var_SA = (jnp.ones_like(end_mean_SA) * ((self.env.action_space().high - self.env.action_space().low)
                                                         / self.agent_config.INIT_VAR_DIVISOR) ** 2)
 
-            return (curr_obs_O, end_mean_SA, end_var_SA, shifted_actions_BSA, key), MPCTransitionXYR(obs=planned_iCEM_traj_LX.obs,
+            return (curr_obs_O, curr_env_state, end_mean_SA, end_var_SA, shifted_actions_BSA, key), MPCTransitionXYR(obs=planned_iCEM_traj_LX.obs,
                                                                                             action=planned_iCEM_traj_LX.action,
                                                                                             reward=planned_iCEM_traj_LX.reward,
+                                                                                            env_state=planned_iCEM_traj_LX.env_state,
                                                                                             x=iCEM_traj_RISX.x,
                                                                                             y=iCEM_traj_RISX.y,
                                                                                             returns=all_returns_B)
@@ -283,19 +284,25 @@ class MPCAgent(AgentBase):
         init_var_S1 = (jnp.ones_like(init_mean_S1) * ((self.env.action_space().high - self.env.action_space().low) / self.agent_config.INIT_VAR_DIVISOR) ** 2)
         shift_actions_BSA = jnp.zeros((self.n_keep, self.agent_config.PLANNING_HORIZON, self.action_dim))  # is this okay to add zeros?
 
-        (_, _, _, _, key), overall_traj = jax.lax.scan(_outer_loop, (start_obs_O, init_mean_S1, init_var_S1, shift_actions_BSA, key), None, outer_loop_steps)
+        (_, _, _, _, _, key), overall_traj = jax.lax.scan(_outer_loop, (start_obs_O, start_env_state, init_mean_S1, init_var_S1, shift_actions_BSA, key), None, outer_loop_steps)
 
-        overall_traj_minus_xyr_BLX = MPCTransition(obs=overall_traj.obs, action=overall_traj.action, reward=overall_traj.reward)
+        overall_traj_minus_xyr_BLX = MPCTransition(obs=overall_traj.obs,
+                                                   action=overall_traj.action,
+                                                   reward=overall_traj.reward,
+                                                   env_state=overall_traj.env_state)
         flattened_overall_traj_SX = jax.tree_util.tree_map(lambda x: x.reshape(x.shape[0] * x.shape[1], -1), overall_traj_minus_xyr_BLX)
         # TODO check this flattens correctly aka the batch of L steps merges into a contiguous S
 
         flatenned_path_x = overall_traj.x.reshape((-1, overall_traj.x.shape[-1]))
         flatenned_path_y = overall_traj.y.reshape((-1, overall_traj.y.shape[-1]))
-        # TODO check this actually flattens, do we even want to fllaten this, unsure what shape even is
+        # TODO check this actually flattens, do we even want to flatten this, unsure what shape even is
 
         joiner_SP1O = jnp.concatenate((jnp.expand_dims(start_obs_O, axis=0), flattened_overall_traj_SX.obs))
         return ((flatenned_path_x, flatenned_path_y),
-                (joiner_SP1O, flattened_overall_traj_SX.action, flattened_overall_traj_SX.reward),
+                MPCTransition(obs=joiner_SP1O,
+                              action=flattened_overall_traj_SX.action,
+                              reward=flattened_overall_traj_SX.reward,
+                              env_state=jax.tree.map(lambda x: x.squeeze(axis=-1), flattened_overall_traj_SX.env_state)),
                 overall_traj.returns)
 
     @partial(jax.jit, static_argnums=(0,))
@@ -307,56 +314,56 @@ class MPCAgent(AgentBase):
 
         return {"exe_path_x": x, "exe_path_y": y}
 
-    @partial(jax.jit, static_argnums=(0, 1, 6, 7))
-    def execute_mpc(self, f, obs, train_state, split_data, key, horizon, actions_per_plan):
+    @partial(jax.jit, static_argnums=(0, 1, 7, 8))
+    def execute_mpc(self, f, obs, env_state, train_state, split_data, key, horizon, actions_per_plan):
         train_data = gpjax.Dataset(split_data[0], split_data[1])
 
-        full_path, output, sample_returns = self.run_algorithm_on_f(f, obs, train_state, train_data, key, horizon, actions_per_plan)
+        full_path, output_traj, sample_returns = self.run_algorithm_on_f(f, obs, env_state, train_state, train_data, key, horizon, actions_per_plan)
 
-        action = output[1]
+        exe_path = self.get_exe_path_crop(output_traj.obs, output_traj.action)
 
-        exe_path = self.get_exe_path_crop(output[0], output[1])
-
-        return action, exe_path, output
+        return output_traj, exe_path
 
     def make_postmean_func(self):
-        @partial(jax.jit, static_argnums=(1, 2))
-        def _postmean_fn(x, unused1, unused2, train_state, train_data, key):
-            mu, std = self.dynamics_model.get_post_mu_cov(x, train_state, train_data, full_cov=False)
-            return jnp.squeeze(mu, axis=0)
+        @partial(jax.jit, static_argnums=(2,))
+        def _postmean_fn(obs_O, action_A, env, unused, train_state, train_data, key):
+            obsacts_1OPA = jnp.expand_dims(jnp.concatenate((obs_O, action_A), axis=-1), axis=0)
+            mu, std = self.dynamics_model.get_post_mu_cov(obsacts_1OPA, train_state, train_data, full_cov=False)
+            mu = mu.squeeze(axis=0)
+            nobs = obs_O + mu
+            return nobs, mu, env.get_state(nobs)
         return _postmean_fn
 
-    def make_postmean_func2(self):
-        @partial(jax.jit, static_argnums=(1, 2))
-        def _postmean_fn(x, unused1, unused2, train_state, train_data, key):
-            mu, std = self.dynamics_model.get_post_mu_cov(x, train_state, train_data, full_cov=False)
-            return mu
+    def make_postmean_func_eval(self):
+        @partial(jax.jit, static_argnums=(2,))
+        def _postmean_fn(obs, action, env, unused, train_state, train_data, key):
+            obsacts = jnp.concatenate((obs, action), axis=-1)
+            mu, std = self.dynamics_model.get_post_mu_cov(obsacts, train_state, train_data, full_cov=False)
+            return obs + mu, mu
         return _postmean_fn
+    # TODO above only exists as we are unable to easily vmap a gpjax datset which is sad
 
     @partial(jax.jit, static_argnums=(0,))
-    def get_next_point(self, curr_obs_O, train_state, train_data, step_idx, key):
+    def get_next_point(self, curr_obs_O, curr_env_state, train_state, train_data, step_idx, key):
         key, _key = jrandom.split(key)
-        action_1A, exe_path, _ = self.execute_mpc(self.make_postmean_func(), curr_obs_O, train_state, (train_data.X, train_data.y), _key, horizon=1, actions_per_plan=1)
-        x_next_OPA = jnp.concatenate((curr_obs_O, jnp.squeeze(action_1A, axis=0)), axis=-1)
+        output_traj, exe_path = self.execute_mpc(self.make_postmean_func(), curr_obs_O, curr_env_state, train_state, (train_data.X, train_data.y), _key, horizon=1, actions_per_plan=1)
+        x_next_OPA = jnp.concatenate((curr_obs_O, jnp.squeeze(output_traj.action, axis=0)), axis=-1)
 
         exe_path = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=0), exe_path)
 
-        # assert jnp.allclose(curr_obs_O, x_next_OPA[:self.obs_dim]), "For rollout cases, we can only give queries which are from the current state"
-        # TODO can we jax the assertion?
-
         checkify.check(jnp.allclose(curr_obs_O, x_next_OPA[:self.obs_dim]), "For rollout cases, we can only give queries which are from the current state")
 
-        return x_next_OPA, exe_path, curr_obs_O, train_state, None, key
+        return x_next_OPA, output_traj.obs[-1], jax.tree.map(lambda x: x.squeeze(), output_traj.env_state), output_traj.reward.squeeze(), exe_path, train_state, None, key
 
     @partial(jax.jit, static_argnums=(0, 2))
-    def execute_gt_mpc(self, init_obs, f, train_state, split_dataset, key):
+    def execute_gt_mpc(self, init_obs, f, init_env_state, train_state, split_dataset, key):
         init_dataset = gpjax.Dataset(split_dataset[0], split_dataset[1])
         key, _key = jrandom.split(key)
-        full_path, test_mpc_data, all_returns = self.run_algorithm_on_f(f, init_obs, train_state, init_dataset, key,
-                                                                         horizon=self.env.horizon,
-                                                                         actions_per_plan=self.agent_config.ACTIONS_PER_PLAN)
+        full_path, output_traj, all_returns = self.run_algorithm_on_f(f, init_obs, init_env_state, train_state, init_dataset, key,
+                                                                        horizon=self.env.horizon,
+                                                                        actions_per_plan=self.agent_config.ACTIONS_PER_PLAN)
         path_lengths = len(full_path[0])  # TODO should we turn the output into a dict for x and y ?
-        true_path = self.get_exe_path_crop(test_mpc_data[0], test_mpc_data[1])
+        true_path = self.get_exe_path_crop(output_traj.obs, output_traj.action)
 
         key, _key = jrandom.split(key)
         test_points = jax.tree_util.tree_map(lambda x: jrandom.choice(_key, x,
@@ -373,12 +380,12 @@ class MPCAgent(AgentBase):
         def _env_step(env_runner_state, unused):
             obs_O, env_state, key = env_runner_state
             key, _key = jrandom.split(key)
-            action_1A, _, _ = self.execute_mpc(self.make_postmean_func(), obs_O, train_state,
+            output_traj, _, = self.execute_mpc(self.make_postmean_func(), obs_O, env_state, train_state,
                                                 (train_data.X, train_data.y),
                                                 _key, horizon=1, actions_per_plan=1)
-            action_A = jnp.squeeze(action_1A, axis=0)
+            action_A = jnp.squeeze(output_traj.action, axis=0)
             key, _key = jrandom.split(key)
-            nobs_O, new_env_state, reward, done, info = self.env.step(_key, env_state, action_A)
+            nobs_O, _, new_env_state, reward, _, _ = self.env.step(action_A, env_state, _key)
             return (nobs_O, new_env_state, key), (nobs_O, reward, action_A)
 
         key, _key = jrandom.split(key)
@@ -389,9 +396,13 @@ class MPCAgent(AgentBase):
         real_path_x_SOPA = jnp.concatenate((real_obs_SP1O[:-1], real_actions_SA), axis=-1)
         real_path_y_SO = real_obs_SP1O[1:] - real_obs_SP1O[:-1]
         key, _key = jrandom.split(key)
-        real_path_y_hat_SO = self.make_postmean_func2()(real_path_x_SOPA, None, None, train_state,
-                                                         train_data, _key)
-        # TODO unsure how to fix the above
+        _, real_path_y_hat_SO = self.make_postmean_func_eval()(real_obs_SP1O[:-1],
+                                                             real_actions_SA,
+                                                             self.env,
+                                                             None,
+                                                             train_state,
+                                                             train_data,
+                                                             _key)
         mse = 0.5 * jnp.mean(jnp.sum(jnp.square(real_path_y_SO - real_path_y_hat_SO), axis=1))
 
         return (utils.RealPath(x=real_path_x_SOPA, y=real_path_y_SO, y_hat=real_path_y_hat_SO),

@@ -7,10 +7,8 @@ def get_config():
 
     # config.ENV_NAME = "pilcocartpole-v0"
     config.ENV_NAME = "bacpendulum-v0"
-    config.NORMALISE_ENV = True
+    config.NORMALISE_ENV = False
     config.GENERATIVE_ENV = True
-    config.TELEPORT = True  # aka teleporting in the original thing, good for periodic envs
-    # TODO can we make teleport part of the env so it correctly works for periodic boundaries, e.g. Pendulum
 
     config.PRETRAIN_HYPERPARAMS = False
     config.PRETRAIN_NUM_DATA = 10#00

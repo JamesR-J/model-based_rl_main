@@ -22,8 +22,7 @@ jax.config.update("jax_enable_x64", True)
 
 # TODO replace the updating dataset with flashbax maybe? would this be more efficient or less?
 
-# env, env_params = gymnax.make("MountainCarContinuous-v0")
-# TODO make these envs in gymnax style for continuous control, can we add a wrapper so we don't need to add generative env to them all?
+# TODO do we need to track all env_state in MPC, it is good if not using a generative env with time step, but do we really need time?
 
 
 """
@@ -47,7 +46,7 @@ def main(_):
     #     mode=config.WANDB
     # )
 
-    config.DEVICE = jax.lib.xla_bridge.get_backend().platform
+    config.DEVICE = jax.extend.backend.get_backend().platform
     # # config.DEVICE = jax.extend.backend.get_backend()
     logging.info(f"Current JAX Device: {config.DEVICE}")
 
