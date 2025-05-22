@@ -7,7 +7,7 @@ def get_config():
 
     # config.ENV_NAME = "pilcocartpole-v0"
     config.ENV_NAME = "bacpendulum-v0"
-    config.NORMALISE_ENV = False
+    config.NORMALISE_ENV = True
     config.GENERATIVE_ENV = True
 
     config.PRETRAIN_HYPERPARAMS = False
@@ -34,9 +34,9 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = "MPC"
-    # config.AGENT_TYPE = "PILCO"
+    # config.AGENT_TYPE = "MPC"
     # config.AGENT_TYPE = "TIP"
+    config.AGENT_TYPE = "PILCO"
     # config.AGENT_TYPE = "PETS"
 
     config.AGENT_CONFIG = {}

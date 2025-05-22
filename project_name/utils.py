@@ -38,23 +38,18 @@ class MPCTransition(NamedTuple):
     obs: jnp.ndarray
     action:jnp.ndarray
     reward:jnp.ndarray
-    env_state: jnp.ndarray
 
 class MPCTransitionXY(NamedTuple):
     obs: jnp.ndarray
     action:jnp.ndarray
     reward:jnp.ndarray
-    env_state: jnp.ndarray
     x: jnp.ndarray
     y: jnp.ndarray
 
-class MPCTransitionXYR(NamedTuple):
+class MPCTransitionR(NamedTuple):
     obs: jnp.ndarray
     action:jnp.ndarray
     reward:jnp.ndarray
-    env_state: jnp.ndarray
-    x: jnp.ndarray
-    y: jnp.ndarray
     returns: jnp.ndarray
 
 class PlotTuple(NamedTuple):

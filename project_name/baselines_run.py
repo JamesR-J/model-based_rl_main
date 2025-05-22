@@ -31,7 +31,7 @@ def run_train(config):
     key = jrandom.key(config.SEED)
 
     # env = GymnaxPilcoCartPole()
-    env = GymnaxPendulum()
+    # env = GymnaxPendulum()
     env = bifurcagym.make("Pendulum-v0",
                           cont_state=True,
                           cont_action=True,
@@ -57,7 +57,7 @@ def run_train(config):
     else:
         mpc_func = utils.env_transition
         # TODO add in the usual step as a function if possible, may need some major reworking
-        raise NotImplementedError("If not generative env then we do not have a mpc_func yet")
+        # raise NotImplementedError("If not generative env then we do not have a mpc_func yet")
 
     # set the initial obs, i.e. env.reset
     # TODO should be able to set a consistent start point defined in config
@@ -93,8 +93,7 @@ def run_train(config):
         key, _key = jrandom.split(key)
         batch_key = jrandom.split(_key, config.NUM_EVAL_TRIALS)
         start_gt_time = time.time()
-        true_paths, test_points, path_lengths, all_returns = (jax.vmap(actor.execute_gt_mpc,
-                                                                      in_axes=(None, None, None, None, None, 0))
+        true_paths, test_points, all_returns = (jax.vmap(actor.execute_gt_mpc, in_axes=(None, None, None, None, None, 0))
                                                               (start_obs,
                                                                mpc_func,
                                                                start_env_state,
@@ -103,8 +102,7 @@ def run_train(config):
                                                                # TODO ideally sort the above at some point
                                                                batch_key))
         logging.info(f"Ground truth time taken = {time.time() - start_gt_time:.2f}s; "
-                     f"Mean Return = {jnp.mean(all_returns):.2f}; Std Return = {jnp.std(all_returns):.2f}; "
-                     f"Mean Path Lengths = {jnp.mean(path_lengths)}; ")
+                     f"Mean Return = {jnp.mean(all_returns):.2f}; Std Return = {jnp.std(all_returns):.2f}")
 
         # Plot groundtruth paths and print info
         ax_gt = None
@@ -132,13 +130,13 @@ def run_train(config):
             # TODO some if statement if our input data does not exist as not using generative approach, i.e. the first step
 
             # get next point
-            err, (x_next_OPA, nobs_O, next_env_state, reward, exe_path, train_state, acq_val, key) = checkify.checkify(actor.get_next_point)(curr_obs_O,
-                                                                                                                         curr_env_state,
-                                                                                                                         train_state,
-                                                                                                                         train_data,
-                                                                                                                         step_idx,
-                                                                                                                         key)
-            err.throw()
+            x_next_OPA, exe_path, train_state, acq_val, key = actor.get_next_point(curr_obs_O,
+                                                                                   curr_env_state,
+                                                                                   train_state,
+                                                                                   train_data,
+                                                                                   step_idx,
+                                                                                   key)
+            assert jnp.allclose(curr_obs_O, x_next_OPA[:env.observation_space().shape[0]]), "For rollout cases, we can only give queries which are from the current state"
 
             # periodically run evaluation and plot
             if (step_idx % config.EVAL_FREQ == 0 or step_idx + 1 == config.NUM_ITERS):
@@ -158,41 +156,13 @@ def run_train(config):
                                  env, config, actor.agent_config, exe_path, real_paths_mpc, x_next_OPA,
                                  step_idx)
 
-            action_A = x_next_OPA[-action_dim:]
-            y_next_O = nobs_O - curr_obs_O
-            global_returns += reward
-
+            # Query function, update data
             key, _key = jrandom.split(key)
-            nobs_O_test, y_next_O_test, next_env_state_test, _, _, _ = env.step(action_A, curr_env_state, _key)
-            # testyy_next_O, delta, text_next_env_state = mpc_func(curr_obs_O, action_A, env, curr_env_state, train_state, train_data, _key)
-            # TODO the above are equivalent, idk if there is pref for either? maybe add an assertion for now to ensure they are the same
-            # TODO the only difference is the time representation
-
-            # # Query function, update data
-            # key, _key = jrandom.split(key)
-            # if config.GENERATIVE_ENV:
-            #     y_next_O = mpc_func(jnp.expand_dims(x_next_OPA, axis=0), env, train_state, train_data, _key)
-            #     new_env_state = "UHOH"
-            #     if actor.agent_config.ROLLOUT_SAMPLING:
-            #         delta = y_next_O[-env.obs_dim:]
-            #         nobs_O = actor._update_fn(curr_obs_O, delta, env)
-            #         # TODO sort the above out, it works when curr_obs doesn't change
-            #     else:
-            #         delta = y_next_O[-env.obs_dim:]
-            #         nobs_O = actor._update_fn(curr_obs_O, delta, env)
-            #
-            #         # # raise NotImplementedError("When is it not rollout sampling?")
-            #         # # TODO dodgy fix for now
-            #         # nobs_O, new_env_state, reward, done, info = env.step(_key, env_state, action_A, env_params)
-            #         # y_next_O = nobs_O - curr_obs_O
-            #         # TODO this does not work with periodic envs and was causing issues
-            #         #
-            #         # global_returns += reward
-            # else:
-            #     nobs_O, new_env_state, reward, done, info = env.step(action_A, curr_env_state, _key)
-            #     global_returns += reward
-            #     # TODO should the above be for both?
-            # # the above should match
+            action_A = x_next_OPA[-action_dim:]
+            nobs_O, y_next_O, next_env_state = mpc_func(curr_obs_O, action_A, env, curr_env_state, train_state, train_data, _key)
+            key, _key = jrandom.split(key)
+            reward = env.reward_function(action_A, curr_env_state, next_env_state, _key)
+            global_returns += reward
 
             logging.info(f"Iteration i={step_idx} Action: {action_A}")
             logging.info(f"Iteration i={step_idx} State : {nobs_O}")

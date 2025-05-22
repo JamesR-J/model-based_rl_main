@@ -22,17 +22,22 @@ class TIPAgent(MPCAgent):
 
         # TODO add some import from folder check thingo
         self.dynamics_model = dynamics_models.MOGP(env, config, self.agent_config, key)
+        # self.dynamics_model = dynamics_models.MOSVGP(env, config, self.agent_config, key)
 
     def make_postmean_func_const_key(self):
-        def _postmean_fn(x, unused1, unused2, train_state, train_data, key):
-            mu = self.dynamics_model.get_post_mu_cov_samples(x, train_state, train_data, key, full_cov=False)
-            return jnp.squeeze(mu, axis=0)
+        def _postmean_fn(obs_O, action_A, env, unused2, train_state, train_data, key):
+            obsacts_1OPA = jnp.expand_dims(jnp.concatenate((obs_O, action_A), axis=-1), axis=0)
+            mu_1O = self.dynamics_model.get_post_mu_cov_samples(obsacts_1OPA, train_state, train_data, key, full_cov=False)
+            mu_O = mu_1O.squeeze(axis=0)
+            nobs_O = env.apply_delta_obs(obs_O, mu_O)
+
+            return nobs_O, mu_O, env.get_state(nobs_O)
         return _postmean_fn
 
-    @partial(jax.jit, static_argnums=(0, 3))
-    def _optimise(self, train_state, train_data, f, exe_path_BSOPA, x_test, key):
+    @partial(jax.jit, static_argnums=(0, 1))
+    def _optimise(self, f, x_test, curr_env_state, train_state, train_data, exe_path_BSOPA, key):
         curr_obs_O = x_test[:self.obs_dim]
-        mean = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.action_dim))  # TODO this may not be zero if there is alreayd an action sequence, should check this
+        mean = jnp.zeros((self.agent_config.PLANNING_HORIZON, self.action_dim))
         init_var_divisor = 4
         var = jnp.ones_like(mean) * ((self.env.action_space().high - self.env.action_space().low) / init_var_divisor) ** 2
 
@@ -47,13 +52,14 @@ class TIPAgent(MPCAgent):
 
             key, _key = jrandom.split(key)
             batch_key = jrandom.split(_key, self.agent_config.NUM_CANDIDATES)
-            acq = jax.vmap(self._evaluate_samples, in_axes=(None, None, None, None, 0, None, 0))(train_state,
-                                                                                                 (train_data.X, train_data.y),
-                                                                                           f,
-                                                                                           curr_obs_O,
-                                                                                           samples_BSA,
-                                                                                           exe_path_BSOPA,
-                                                                                           batch_key)
+            acq = jax.vmap(self._evaluate_samples, in_axes=(None, None, None, None, None, 0, None, 0))(f,
+                                                                                                       curr_obs_O,
+                                                                                                       curr_env_state,
+                                                                                                       train_state,
+                                                                                                       (train_data.X, train_data.y),
+                                                                                                        samples_BSA,
+                                                                                                        exe_path_BSOPA,
+                                                                                                        batch_key)
             # TODO ideally we could vmap f above using params
 
             # TODO reinstate below so that it works with jax
@@ -94,20 +100,19 @@ class TIPAgent(MPCAgent):
 
         return optimum, best_return
 
-    @partial(jax.jit, static_argnums=(0, 3))
-    def _evaluate_samples(self, train_state, split_data, f, obs_O, samples_S1, exe_path_BSOPA, key):
+    @partial(jax.jit, static_argnums=(0, 1))
+    def _evaluate_samples(self, f, obs_O, env_state, train_state, split_data, samples_S1, exe_path_BSOPA, key):
         train_data = gpjax.Dataset(split_data[0], split_data[1])
 
         # run a for loop planning basically
         def _run_planning_horizon2(runner_state, actions_A):  # TODO again can we generalise this from above to save rewriting things
-            obs_O, key = runner_state
-            obsacts_OPA = jnp.concatenate((obs_O, actions_A), axis=-1)
+            obs_O, env_state, key = runner_state
+            obsacts_OPA = jnp.concatenate((obs_O, actions_A))
             key, _key = jrandom.split(key)
-            data_y_O = f(jnp.expand_dims(obsacts_OPA, axis=0), None, None, train_state, train_data, _key)
-            nobs_O = self._update_fn(obsacts_OPA, data_y_O, self.env)
-            return (nobs_O, key), obsacts_OPA
+            nobs_O, delta_obs_O, next_env_state = f(obs_O, actions_A, self.env, env_state, train_state, train_data, _key)
+            return (nobs_O, next_env_state, key), obsacts_OPA
 
-        _, x_list_SOPA = jax.lax.scan(jax.jit(_run_planning_horizon2), (obs_O, key), samples_S1)
+        _, x_list_SOPA = jax.lax.scan(jax.jit(_run_planning_horizon2), (obs_O, env_state, key), samples_S1)
 
         # TODO this part is the acquisition function so should be generalised at some point rather than putting it here
         # get posterior covariance for x_set
@@ -115,8 +120,6 @@ class TIPAgent(MPCAgent):
 
         # get posterior covariance for all exe_paths, so this be a vmap probably
         def _get_sample_cov(x_list_SOPA, exe_path_SOPA, params):
-            # params["train_data_x"] = jnp.concatenate((params["train_data_x"], exe_path_SOPA["exe_path_x"]))
-            # params["train_data_y"] = jnp.concatenate((params["train_data_y"], exe_path_SOPA["exe_path_y"]))
             new_dataset = train_data + gpjax.Dataset(exe_path_SOPA["exe_path_x"], exe_path_SOPA["exe_path_y"])
             return self.dynamics_model.get_post_mu_fullcov(x_list_SOPA, params, new_dataset, full_cov=True)
         # TODO this is fairly slow as it feeds in a large amount of gp data to get the sample cov
@@ -137,31 +140,31 @@ class TIPAgent(MPCAgent):
 
         return acq
 
-    @partial(jax.jit, static_argnums=(0, 1, 6, 7))
-    def execute_mpc_next_point(self, f, obs, train_state, split_data, key, horizon, actions_per_plan):
-        train_data = gpjax.Dataset(split_data[0], split_data[1])
-
-        adj_data = self.dynamics_model._adjust_dataset(train_data)
-
-        likelihood = self.dynamics_model.likelihood_builder(adj_data.n)
-        posterior = self.dynamics_model.prior * likelihood
-
-        graphdef, state = nnx.split(posterior)
-        opt_posterior = nnx.merge(graphdef, train_state["train_state"])
-
-        key, _key = jrandom.split(key)
-        sample_func = dynamics_models.adj_sample_approx(opt_posterior, num_samples=1, train_data=adj_data, key=_key, num_features=500)
-
-        full_path, output, sample_returns = self.run_algorithm_on_f(sample_func, obs, train_state, train_data, key, horizon, actions_per_plan)
-
-        action = output[1]
-
-        exe_path = self.get_exe_path_crop(output[0], output[1])
-
-        return action, exe_path, output
+    # @partial(jax.jit, static_argnums=(0, 1, 6, 7))
+    # def execute_mpc_next_point(self, f, obs, train_state, split_data, key, horizon, actions_per_plan):
+    #     train_data = gpjax.Dataset(split_data[0], split_data[1])
+    #
+    #     adj_data = self.dynamics_model._adjust_dataset(train_data)
+    #
+    #     likelihood = self.dynamics_model.likelihood_builder(adj_data.n)
+    #     posterior = self.dynamics_model.prior * likelihood
+    #
+    #     graphdef, state = nnx.split(posterior)
+    #     opt_posterior = nnx.merge(graphdef, train_state["train_state"])
+    #
+    #     key, _key = jrandom.split(key)
+    #     sample_func = dynamics_models.adj_sample_approx(opt_posterior, num_samples=1, train_data=adj_data, key=_key, num_features=500)
+    #
+    #     full_path, output, sample_returns = self.run_algorithm_on_f(sample_func, obs, train_state, train_data, key, horizon, actions_per_plan)
+    #
+    #     action = output[1]
+    #
+    #     exe_path = self.get_exe_path_crop(output[0], output[1])
+    #
+    #     return action, exe_path, output
 
     @partial(jax.jit, static_argnums=(0,))
-    def get_next_point(self, curr_obs, train_state, train_data, step_idx, key):
+    def get_next_point(self, curr_obs_O, curr_env_state, train_state, train_data, step_idx, key):
         key, _key = jrandom.split(key)
         batch_key = jrandom.split(_key, self.agent_config.ACQUISITION_SAMPLES)
 
@@ -174,10 +177,11 @@ class TIPAgent(MPCAgent):
 
         # idea here is to run a batch of MPC on different posterior functions, can we sample a batch of params?
         # so that we can just call the GP on these params in a VMAPPED setting
-        _, exe_path_BSOPA, _ = jax.vmap(self.execute_mpc, in_axes=(None, None, 0, None, 0, None, None))(
+        output_traj, exe_path_BSOPA = jax.vmap(self.execute_mpc, in_axes=(None, None, None, 0, None, 0, None, None))(
             self.make_postmean_func_const_key(),
             # self.make_postmean_func(),
-            curr_obs,
+            curr_obs_O,
+            curr_env_state,
             batch_train_state,
             (train_data.X, train_data.y),
             batch_key,
@@ -187,15 +191,12 @@ class TIPAgent(MPCAgent):
 
         # add in some test values
         key, _key = jrandom.split(key)
-        x_test = jnp.concatenate((curr_obs, self.env.action_space().sample(_key)))
+        x_test = jnp.concatenate((curr_obs_O, self.env.action_space().sample(_key)))
 
         # now optimise the dynamics model with the x_test
         # take the exe_path_list that has been found with different posterior samples using iCEM
         # x_data and y_data are what ever you have currently
         key, _key = jrandom.split(key)
-        x_next, acq_val = self._optimise(train_state, train_data, self.make_postmean_func(), exe_path_BSOPA, x_test, _key)
+        x_next, acq_val = self._optimise(self.make_postmean_func(), x_test, curr_env_state, train_state, train_data, exe_path_BSOPA, _key)
 
-        checkify.check(jnp.allclose(curr_obs, x_next[:self.obs_dim]),
-                      "For rollout cases, we can only give queries which are from the current state")
-
-        return x_next, exe_path_BSOPA, curr_obs, train_state, acq_val, key
+        return x_next, exe_path_BSOPA, train_state, acq_val, key

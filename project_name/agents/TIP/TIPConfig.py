@@ -27,6 +27,7 @@ def get_TIP_config():
     config.PRETRAIN_RESTARTS = 5
     config.TRAIN_GP_NUM_ITERS = 1000
     config.GP_LR = 0.01
+    config.NUM_INDUCING_POINTS = 50
 
     config.ROLLOUT_SAMPLING = True
 

@@ -8,8 +8,7 @@ from project_name.agents.agent_base import AgentBase
 import jax.numpy as jnp
 import jax
 import jax.random as jrandom
-from project_name.utils import update_obs_fn, update_obs_fn_teleport, get_f_mpc, get_f_mpc_teleport
-from project_name import dynamics_models
+from project_name import dynamics_models, utils
 from project_name.agents.PILCO import LinearController, get_PILCO_config, ExponentialReward
 import optax
 from flax.training.train_state import TrainState
@@ -61,11 +60,6 @@ class PILCOAgent(AgentBase):
 
         # self.tx = optax.chain(optax.clip_by_global_norm(self.agent_config.MAX_GRAD_NORM),
         #                       optax.adam(self.agent_config.POLICY_LR))
-
-        if config.TELEPORT:
-            self._update_fn = update_obs_fn_teleport
-        else:
-            self._update_fn = update_obs_fn
 
     def create_train_state(self, init_data, key):
         train_state = {}
@@ -367,7 +361,7 @@ class PILCOAgent(AgentBase):
         return self.controller.apply(train_state.params, x_m, jnp.zeros([self.obs_dim, self.obs_dim]))
 
     # @partial(jax.jit, static_argnums=(0,))  # can't jit due to conditional, not sure what is quicker tho
-    def get_next_point(self, curr_obs_O, train_state, train_data, step_idx, key):
+    def get_next_point(self, curr_obs_O, curr_env_state, train_state, train_data, step_idx, key):
         # do the usual act and all that
         action_1A = self.controller.apply(train_state["controller_train_state"].params, curr_obs_O[None, :], jnp.zeros((self.obs_dim, self.obs_dim)))[0]
 
@@ -381,11 +375,7 @@ class PILCOAgent(AgentBase):
                       "exe_path_y": jnp.zeros((1, 10, 2))}
         # TODO the above is a bad fix for now
 
-        checkify.check(jnp.allclose(curr_obs_O, x_next_OPA[:self.obs_dim]),
-                       "For rollout cases, we can only give queries which are from the current state")
-
-
-        return x_next_OPA, exe_path, curr_obs_O, train_state, None, key
+        return x_next_OPA, exe_path, train_state, None, key
 
     @partial(jax.jit, static_argnums=(0,))
     def _compute_returns(self, rewards):  # MUST BE SHAPE batch, horizon as polyval uses shape horizon, batch
@@ -398,11 +388,10 @@ class PILCOAgent(AgentBase):
 
         def _env_step(env_runner_state, unused):
             obs_O, env_state, key = env_runner_state
-            key, _key = jrandom.split(key)
             action_1A = self.controller.apply(train_state["controller_train_state"].params, obs_O[None, :], jnp.zeros((self.obs_dim, self.obs_dim)))[0]
             action_A = jnp.squeeze(action_1A, axis=0)
             key, _key = jrandom.split(key)
-            nobs_O, new_env_state, reward, done, info = self.env.step(_key, env_state, action_A)
+            nobs_O, delta_obs_O, new_env_state, reward, done, info = self.env.step(action_A, env_state, _key)
             return (nobs_O, new_env_state, key), (nobs_O, reward, action_A)
 
         key, _key = jrandom.split(key)
@@ -413,11 +402,8 @@ class PILCOAgent(AgentBase):
         real_returns_1 = self._compute_returns(jnp.expand_dims(real_rewards_S, axis=0))
         real_path_x_SOPA = jnp.concatenate((real_obs_SP1O[:-1], real_actions_SA), axis=-1)
         real_path_y_SO = real_obs_SP1O[1:] - real_obs_SP1O[:-1]
-        key, _key = jrandom.split(key)
-        # real_path_y_hat_SO = self.make_postmean_func2()(real_path_x_SOPA, None, None, train_state,
-        #                                                 train_data, _key)
         real_path_y_hat_SO = real_path_y_SO
-        # TODO dodgy fix for now but should sort it out
+        # TODO dodgy fix for now but should sort it out eventually
         mse = 0.5 * jnp.mean(jnp.sum(jnp.square(real_path_y_SO - real_path_y_hat_SO), axis=1))
 
         return (utils.RealPath(x=real_path_x_SOPA, y=real_path_y_SO, y_hat=real_path_y_hat_SO),
